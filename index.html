@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>カニジャンプ コレクション（2D DX / 3D）</title>
+  <meta name="description" content="横断歩道のカニ1号ゲーム2作品を遊べる統合ポータル（2DアクションDX / 3D 3レーン）" />
+  <link rel="icon" type="image/png" href="./portal-assets/favicon.png" />
+  <style>
+    :root {
+      --ink: #0f172a;
+      --muted: #475569;
+      --font: "Hiragino Maru Gothic ProN", "Rounded Mplus 1c", "Yu Gothic", system-ui, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100dvh;
+      font-family: var(--font);
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 18% 12%, rgba(255, 245, 196, 0.75), transparent 40%),
+        linear-gradient(180deg, #56b4fb 0%, #bae6fd 58%, #334155 58%, #1e293b 100%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 28px 16px 36px;
+      position: relative;
+      overflow-x: hidden;
+    }
+    /* Crosswalk stripes across the lower backdrop */
+    .crosswalk {
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: 8%;
+      height: 54px;
+      background: repeating-linear-gradient(
+        -16deg,
+        rgba(255, 255, 255, 0.85) 0 54px,
+        transparent 54px 104px
+      );
+      pointer-events: none;
+      z-index: 0;
+      opacity: 0.55;
+    }
+    main {
+      position: relative;
+      z-index: 1;
+      width: min(920px, 100%);
+      text-align: center;
+    }
+    .eyebrow {
+      display: inline-block;
+      background: rgba(15, 23, 42, 0.75);
+      color: #fde047;
+      font-size: 12px;
+      font-weight: 900;
+      letter-spacing: 0.08em;
+      padding: 5px 14px;
+      border-radius: 999px;
+      margin-bottom: 10px;
+    }
+    h1 {
+      margin: 0 0 8px;
+      font-size: clamp(30px, 6.5vw, 48px);
+      font-weight: 900;
+      color: #fff;
+      -webkit-text-stroke: 4px #0f172a;
+      paint-order: stroke fill;
+      text-shadow: 0 8px 20px rgba(15, 23, 42, 0.3);
+    }
+    .lead {
+      margin: 0 0 26px;
+      font-size: 15px;
+      font-weight: 800;
+      color: #0f172a;
+      background: rgba(255, 255, 255, 0.72);
+      display: inline-block;
+      padding: 6px 18px;
+      border-radius: 999px;
+      backdrop-filter: blur(6px);
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 20px;
+      text-align: left;
+    }
+    .game-card {
+      background: rgba(255, 255, 255, 0.94);
+      backdrop-filter: blur(12px);
+      border: 3px solid #fff;
+      border-radius: 28px;
+      padding: 24px 22px 22px;
+      box-shadow: 0 20px 44px rgba(15, 23, 42, 0.28);
+      display: flex;
+      flex-direction: column;
+      transition: transform 0.18s ease, box-shadow 0.18s ease;
+    }
+    .game-card:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 26px 52px rgba(15, 23, 42, 0.34);
+    }
+    .card-top {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 14px;
+    }
+    .thumb {
+      width: 92px;
+      height: 92px;
+      object-fit: contain;
+      flex-shrink: 0;
+      filter: drop-shadow(0 8px 12px rgba(15, 23, 42, 0.2));
+    }
+    .badge {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 900;
+      color: #fff;
+      padding: 3px 10px;
+      border-radius: 999px;
+      margin-bottom: 6px;
+    }
+    .badge-2d { background: linear-gradient(135deg, #f97316, #ef4444); }
+    .badge-3d { background: linear-gradient(135deg, #0ea5e9, #6366f1); }
+    h2 {
+      margin: 0;
+      font-size: 23px;
+      font-weight: 900;
+      line-height: 1.2;
+    }
+    .desc {
+      margin: 0 0 14px;
+      font-size: 13.5px;
+      line-height: 1.6;
+      color: var(--muted);
+      font-weight: 700;
+    }
+    .tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 16px;
+    }
+    .tag {
+      font-size: 11px;
+      font-weight: 800;
+      background: #f1f5f9;
+      color: #334155;
+      padding: 4px 10px;
+      border-radius: 999px;
+    }
+    .score-bar {
+      margin-top: auto;
+      margin-bottom: 14px;
+      padding: 9px 12px;
+      border-radius: 14px;
+      background: #fffbeb;
+      border: 1.5px solid #fde68a;
+      font-size: 12.5px;
+      font-weight: 800;
+      color: #92400e;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .play-btn {
+      display: block;
+      width: 100%;
+      text-align: center;
+      text-decoration: none;
+      padding: 14px 18px;
+      border-radius: 16px;
+      font-size: 17px;
+      font-weight: 900;
+      color: #fff;
+      transition: transform 0.12s ease, filter 0.15s ease;
+    }
+    .play-btn:hover { filter: brightness(1.06); }
+    .play-btn:active { transform: scale(0.98); }
+    .play-2d {
+      background: linear-gradient(135deg, #f97316, #ef4444);
+      box-shadow: 0 8px 20px rgba(239, 68, 68, 0.34);
+    }
+    .play-3d {
+      background: linear-gradient(135deg, #0ea5e9, #4f46e5);
+      box-shadow: 0 8px 20px rgba(79, 70, 229, 0.34);
+    }
+    footer {
+      margin-top: 22px;
+      font-size: 12px;
+      font-weight: 700;
+      color: rgba(255, 255, 255, 0.85);
+    }
+  </style>
+</head>
+<body>
+  <div class="crosswalk" aria-hidden="true"></div>
+  <main>
+    <div class="eyebrow">KANI JUMP COLLECTION</div>
+    <h1>カニジャンプ コレクション</h1>
+    <p class="lead">あそびたいバージョンを選んでね！</p>
+
+    <div class="grid">
+      <article class="game-card">
+        <div class="card-top">
+          <img class="thumb" src="./portal-assets/kani-2d.png" alt="カニ1号 2D" />
+          <div>
+            <span class="badge badge-2d">2D 横スクロールアクション</span>
+            <h2>カニジャンプ DX</h2>
+          </div>
+        </div>
+        <p class="desc">
+          手芸ポンポンのカニ1号が横断歩道を駆け抜ける爽快アクション！
+          2段ジャンプ・急降下・信号機ラッシュ・カニ無双 FEVER で車を吹き飛ばそう。
+        </p>
+        <div class="tags">
+          <span class="tag">2段ジャンプ＆急降下</span>
+          <span class="tag">FEVER 無双</span>
+          <span class="tag">昼→夕→夜変化</span>
+          <span class="tag">2モード対応</span>
+        </div>
+        <div class="score-bar">
+          <span>👑 ベストスコア</span>
+          <span id="best-2d">0</span>
+        </div>
+        <a class="play-btn play-2d" href="./2d/">2D DX をあそぶ！</a>
+      </article>
+
+      <article class="game-card">
+        <div class="card-top">
+          <img class="thumb" src="./portal-assets/kani-3d.webp" alt="カニ1号 3D" />
+          <div>
+            <span class="badge badge-3d">3D 3レーンランナー</span>
+            <h2>カニジャンプ 3D</h2>
+          </div>
+        </div>
+        <p class="desc">
+          Three.js 製のふわふわ 3D カニ1号を操作！
+          奥から迫る乗用車をジャンプで飛び越え、背の高いトラックを横歩きでかわそう。
+        </p>
+        <div class="tags">
+          <span class="tag">3D ファー表現</span>
+          <span class="tag">3レーン横歩き</span>
+          <span class="tag">ライト/ダーク対応</span>
+          <span class="tag">PWA 対応</span>
+        </div>
+        <div class="score-bar">
+          <span>👑 ベストスコア</span>
+          <span id="best-3d">0</span>
+        </div>
+        <a class="play-btn play-3d" href="./3d/">3D 版をあそぶ！</a>
+      </article>
+    </div>
+
+    <footer>ブラウザだけで遊べるカニ1号ゲーム集（PC・スマホ両対応）</footer>
+    <p id="file-warn" style="display:none;margin-top:14px;background:#fffbeb;color:#92400e;border:2px solid #fcd34d;border-radius:14px;padding:12px 16px;font-size:13px;font-weight:800;line-height:1.6;">
+      💡 <strong>2D DX はこのままボタンからすぐ遊べます！</strong><br />
+      3D 版（.glbモデル読み込み）も遊ぶ場合は、ターミナルで この <code>kani_jump</code> フォルダで <code>npm start</code> を実行してください。
+    </p>
+  </main>
+
+  <script>
+    if (location.protocol === 'file:') {
+      document.getElementById('file-warn').style.display = 'block';
+      document.querySelector('a.play-2d').setAttribute('href', './dist/2d/index.html');
+    }
+    try {
+      const b2n = Number(localStorage.getItem('kani-dx-best-normal') || 0);
+      const b2c = Number(localStorage.getItem('kani-dx-best-challenge') || 0);
+      document.getElementById('best-2d').textContent = Math.max(b2n, b2c).toLocaleString() + ' てん';
+      const b3 = Number(localStorage.getItem('kani-jump-best') || 0);
+      document.getElementById('best-3d').textContent = b3.toLocaleString() + ' てん';
+    } catch {
+      /* ignore */
+    }
+  </script>
+</body>
+</html>

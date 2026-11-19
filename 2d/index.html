@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, user-scalable=no" />
+  <title>カニジャンプ DX</title>
+  <meta name="description" content="手芸ポンポンのカニ1号が横断歩道を駆け抜ける、爽快2Dジャンプアクションゲーム！" />
+  <meta name="theme-color" content="#38bdf8" />
+  <link rel="icon" type="image/png" href="./images/favicon.png" />
+  <link rel="apple-touch-icon" href="./images/icon-192.png" />
+  <link rel="stylesheet" href="./src/style.css" />
+</head>
+<body>
+  <div id="app">
+    <canvas id="game-canvas" aria-label="カニジャンプ DX ゲーム画面"></canvas>
+
+    <!-- HUD (常時またはプレイ中に表示) -->
+    <header class="hud" id="hud" data-phase="title">
+      <div class="hud-left">
+        <div class="score-pill">
+          <div class="score-main">
+            <span class="label">SCORE</span>
+            <span class="value" id="hud-score">0</span>
+          </div>
+          <div class="score-sub">
+            <span class="best-badge" title="ベストスコア">👑 <b id="hud-best">0</b></span>
+            <span class="zone-badge" id="hud-zone">昼の横断歩道</span>
+          </div>
+        </div>
+
+        <div class="status-row">
+          <div class="hearts" id="hud-hearts" aria-label="ライフ"></div>
+          <div class="shield-pill" id="hud-shield" hidden>🫧 バリア</div>
+          <div class="combo-pill" id="hud-combo" hidden>
+            <span id="hud-combo-num">0</span> COMBO
+            <b id="hud-combo-mult">×2</b>
+          </div>
+        </div>
+
+        <div class="fever-wrap" id="hud-fever-wrap">
+          <span class="fever-label" id="hud-fever-label">FEVER</span>
+          <div class="fever-track">
+            <div class="fever-fill" id="hud-fever-fill"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="hud-right">
+        <button class="icon-btn" id="btn-bgm" type="button" title="BGM オン/オフ" aria-label="BGM オン/オフ">🎵</button>
+        <button class="icon-btn" id="btn-sfx" type="button" title="効果音 オン/オフ" aria-label="効果音 オン/オフ">🔊</button>
+        <button class="icon-btn" id="btn-pause" type="button" title="一時停止 (P)" aria-label="一時停止" hidden>⏸</button>
+      </div>
+    </header>
+
+    <!-- ラッシュ／フィーバー演出バナー -->
+    <div class="banner" id="banner" hidden>
+      <span class="banner-text" id="banner-text">信号点滅！ラッシュタイム！</span>
+    </div>
+
+    <!-- カウントダウン -->
+    <div class="countdown" id="countdown" hidden>3</div>
+
+    <!-- モバイル＆タッチ用アクションボタン -->
+    <div class="touch-controls" id="touch-controls" hidden>
+      <button class="ctl-btn ctl-dive" id="ctl-dive" type="button" tabindex="-1" aria-label="急降下">
+        <span class="ctl-icon">⬇</span>
+        <span class="ctl-label">きゅうこうか</span>
+      </button>
+      <button class="ctl-btn ctl-jump" id="ctl-jump" type="button" tabindex="-1" aria-label="ジャンプ">
+        <span class="ctl-icon">⬆</span>
+        <span class="ctl-label">ジャンプ</span>
+      </button>
+    </div>
+
+    <!-- タイトル画面 -->
+    <section class="overlay" id="screen-title">
+      <div class="card title-card">
+        <div class="mascot-wrap">
+          <img class="mascot bounce" src="./images/kani.png" alt="カニ1号" />
+          <span class="dx-tag">2D ACTION DX</span>
+        </div>
+
+        <h1 class="logo" aria-label="カニジャンプ DX">
+          <span class="c1">カ</span><span class="c2">ニ</span><span class="c3">ジ</span><span class="c4">ャ</span><span class="c5">ン</span><span class="c6">プ</span>
+          <span class="dx">DX</span>
+        </h1>
+        <p class="subtitle">横断歩道をかけぬけろ！<br />2段ジャンプ＆カニ無双でハイスコアを目指そう</p>
+
+        <div class="mode-switch" role="radiogroup" aria-label="ゲームモード">
+          <button class="mode-btn active" id="mode-normal" type="button" data-mode="normal">
+            <strong>ノーマル</strong>
+            <small>❤️×3 じっくり挑戦</small>
+          </button>
+          <button class="mode-btn" id="mode-challenge" type="button" data-mode="challenge">
+            <strong>チャレンジ</strong>
+            <small>🔥 一発勝負・得点1.5倍</small>
+          </button>
+        </div>
+
+        <ul class="howto-grid">
+          <li><span class="chip chip-jump">タップ / Space</span><span>長押しで大ジャンプ＆2段ジャンプ</span></li>
+          <li><span class="chip chip-dive">下スワイプ / ↓</span><span>空中から急降下ですばやく着地</span></li>
+          <li><span class="chip chip-truck">トラック / 鳥</span><span>高い車は2段ジャンプ！鳥はくぐれる</span></li>
+          <li><span class="chip chip-fever">FEVER!</span><span>ゲージ満タンで無敵＆車を吹き飛ばす</span></li>
+        </ul>
+
+        <button class="btn-primary pulse" id="btn-start" type="button">ゲームスタート！</button>
+        <p class="best-line">👑 ベストスコア：<b id="title-best">0</b></p>
+        <a class="portal-back" id="portal-back" href="../" hidden>🏠 2D / 3D 選択にもどる</a>
+      </div>
+    </section>
+
+    <!-- 一時停止画面 -->
+    <section class="overlay dim" id="screen-pause" hidden>
+      <div class="card compact-card">
+        <h2>ひとやすみ</h2>
+        <p class="pause-sub">カニ1号もハサミを休めています…</p>
+        <div class="btn-stack">
+          <button class="btn-primary" id="btn-resume" type="button">つづける</button>
+          <button class="btn-secondary" id="btn-restart-pause" type="button">はじめから</button>
+          <button class="btn-ghost" id="btn-quit" type="button">タイトルへ</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ゲームオーバー画面 -->
+    <section class="overlay dim" id="screen-over" hidden>
+      <div class="card over-card">
+        <div class="over-header">
+          <img class="mascot dizzy" src="./images/kani.png" alt="カニ1号" />
+          <div class="rank-badge" id="over-rank">A</div>
+        </div>
+        <h2 id="over-heading">おつかれさま！</h2>
+        <p class="rank-title" id="over-rank-title">ハサミさばき達人</p>
+
+        <div class="final-score-box">
+          <span class="final-score" id="over-score">0</span>
+          <small>てん</small>
+        </div>
+        <p class="new-record" id="over-new-record" hidden>🎉 NEW RECORD! ベスト更新！</p>
+
+        <dl class="stats-grid">
+          <div><dt>飛び越え</dt><dd id="stat-jumps">0</dd></div>
+          <div><dt>ニアミス</dt><dd id="stat-nearmiss">0</dd></div>
+          <div><dt>★スター</dt><dd id="stat-stars">0</dd></div>
+          <div><dt>最大コンボ</dt><dd id="stat-combo">0</dd></div>
+          <div><dt>スマッシュ</dt><dd id="stat-smash">0</dd></div>
+          <div><dt>ベスト</dt><dd id="stat-best">0</dd></div>
+        </dl>
+
+        <div class="btn-stack">
+          <button class="btn-primary" id="btn-retry" type="button">もう一回あそぶ！</button>
+          <button class="btn-ghost" id="btn-title" type="button">タイトルへもどる</button>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,16 @@
+{
+  "name": "kani-jump-dx",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "手芸ポンポンのカニ1号が横断歩道を駆け抜ける2DジャンプアクションWebゲーム",
+  "scripts": {
+    "dev": "vite --host",
+    "build": "vite build",
+    "preview": "vite preview --host",
+    "test": "node --test test/*.test.js"
+  },
+  "devDependencies": {
+    "vite": "^6.0.0"
+  }
+}

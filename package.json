@@ -1,0 +1,14 @@
+{
+  "name": "kani-jump-collection",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "カニジャンプ コレクション（2D アクション DX / 3D 3レーン版 統合パッケージ）",
+  "scripts": {
+    "start": "node scripts/serve.mjs",
+    "build": "node scripts/build-all.mjs",
+    "dev:2d": "npm --prefix 2d run dev",
+    "dev:3d": "npm --prefix 3d run dev",
+    "test": "npm --prefix 2d test"
+  }
+}

@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+  <title>カニジャンプ</title>
+  <meta name="description" content="横断歩道のカニを操って、迫ってくる車をジャンプと横歩きでかわす 3D ゲーム" />
+  <meta name="theme-color" content="#7cc8ff" media="(prefers-color-scheme: light)" />
+  <meta name="theme-color" content="#0b1230" media="(prefers-color-scheme: dark)" />
+  <meta name="color-scheme" content="light dark" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="カニジャンプ" />
+  <meta property="og:title" content="カニジャンプ" />
+  <meta property="og:description" content="車をジャンプでかわせ！横断歩道のカニの 3D ゲーム" />
+  <meta property="og:image" content="./img/ogp.jpg" />
+  <link rel="icon" type="image/png" href="./icons/favicon-64.png" />
+  <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png" />
+  <link rel="stylesheet" href="./src/style.css" />
+</head>
+<body>
+  <div id="app">
+    <canvas id="scene" aria-label="ゲーム画面"></canvas>
+
+    <header class="hud" id="hud" data-mode="menu">
+      <div class="score-card">
+        <span class="score-label">スコア</span>
+        <span class="score" id="score">0</span>
+        <span class="best-mini" aria-label="ベストスコア"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 8l4.5 3.5L12 5l4.5 6.5L21 8l-2 11H5z"/></svg><b id="best-mini">0</b></span>
+      </div>
+      <div class="hud-right">
+        <button class="round-btn" id="btn-music" type="button" aria-label="BGM をオフにする"></button>
+        <button class="round-btn" id="btn-sound" type="button" aria-label="効果音をオフにする"></button>
+        <button class="round-btn" id="btn-pause" type="button" aria-label="一時停止">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="5" width="4.2" height="14" rx="1.6"/><rect x="13.8" y="5" width="4.2" height="14" rx="1.6"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <div class="popups" id="popups" aria-live="polite"></div>
+    <div class="countdown" id="countdown" aria-live="assertive" hidden></div>
+    <p class="hint" id="hint" hidden>ボタンでもスワイプでも動かせるよ</p>
+
+    <nav class="controls" id="controls" aria-label="操作ボタン" hidden>
+      <button class="ctl ctl-side" id="ctl-left" type="button" tabindex="-1" aria-label="左へ">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 4.5L7.5 12 15 19.5"/></svg>
+      </button>
+      <button class="ctl ctl-jump" id="ctl-jump" type="button" tabindex="-1" aria-label="ジャンプ">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 14l7-7 7 7"/></svg>
+        <span>ジャンプ</span>
+      </button>
+      <button class="ctl ctl-side" id="ctl-right" type="button" tabindex="-1" aria-label="右へ">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4.5l7.5 7.5L9 19.5"/></svg>
+      </button>
+    </nav>
+
+    <section class="screen" id="screen-title">
+      <div class="panel title-panel">
+        <img class="mascot" src="./src/img/crab_happy.webp" alt="" width="150" height="150" />
+        <h1 class="logo" aria-label="カニジャンプ">
+          <span class="l1">カ</span><span class="l2">ニ</span><span class="l3">ジ</span><span class="l4">ャ</span><span class="l5">ン</span><span class="l6">プ</span>
+        </h1>
+        <p class="lead">せまってくる車を<br />ジャンプと横歩きでかわそう！</p>
+        <ul class="howto">
+          <li><span class="key">◀ ▶</span><span>横歩きでレーン移動</span></li>
+          <li><span class="key key-jump">ジャンプ</span><span>乗用車を飛びこえる</span></li>
+          <li><span class="key key-truck">トラック</span><span>高くて跳べない！よけよう</span></li>
+          <li><span class="key key-star">★</span><span>取るとボーナス</span></li>
+        </ul>
+        <button class="btn primary" id="btn-start" type="button" disabled>よみこみ中…</button>
+        <p class="best"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 8l4.5 3.5L12 5l4.5 6.5L21 8l-2 11H5z"/></svg>ベスト <b id="best-title">0</b></p>
+        <p class="keys">キーボード：← → で移動 ／ スペースでジャンプ ／ P で一時停止</p>
+      </div>
+    </section>
+
+    <section class="screen dim" id="screen-pause" hidden>
+      <div class="panel">
+        <h2>ひとやすみ</h2>
+        <button class="btn primary" id="btn-resume" type="button">つづける</button>
+        <button class="btn" id="btn-quit" type="button">タイトルへ</button>
+      </div>
+    </section>
+
+    <section class="screen dim" id="screen-over" hidden>
+      <div class="panel over-panel">
+        <img class="mascot" src="./src/img/crab_dizzy.webp" alt="" width="150" height="150" />
+        <h2>ひかれちゃった…</h2>
+        <p class="final"><span id="final-score">0</span><small>てん</small></p>
+        <p class="new-record" id="new-record" hidden>ベスト更新！</p>
+        <dl class="stats">
+          <div><dt>よけた</dt><dd id="stat-dodged">0</dd></div>
+          <div><dt>とびこえた</dt><dd id="stat-jumped">0</dd></div>
+          <div><dt>★</dt><dd id="stat-stars">0</dd></div>
+        </dl>
+        <p class="best"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 8l4.5 3.5L12 5l4.5 6.5L21 8l-2 11H5z"/></svg>ベスト <b id="best-over">0</b></p>
+        <button class="btn primary" id="btn-retry" type="button">もう一回！</button>
+        <button class="btn" id="btn-title" type="button">タイトルへ</button>
+      </div>
+    </section>
+
+    <p class="error" id="error" hidden></p>
+  </div>
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>
