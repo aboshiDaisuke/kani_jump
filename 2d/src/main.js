@@ -1,5 +1,15 @@
 import { sound } from './audio.js';
-import { CRAB, MODES, PHYSICS, SCORING, STORAGE_KEYS } from './config.js';
+import {
+  COSMETICS,
+  MISSION_POOL,
+  MODES,
+  OBSTACLE_SPECS,
+  PHYSICS,
+  SCORING,
+  STAGES,
+  STORAGE_KEYS,
+  UPGRADES,
+} from './config.js';
 import {
   clamp,
   computeComboMultiplier,
@@ -8,10 +18,19 @@ import {
   generatePattern,
   getCrabHitbox,
   getObstacleHitbox,
+  isStompBounce,
   rectDistance,
   rectsOverlap,
-  sampleSkyPalette,
 } from './logic.js';
+import {
+  buyOrEquipCosmetic,
+  buyUpgrade,
+  evaluateMissions,
+  getMissionDef,
+  getUpgradeValue,
+  loadMeta,
+  saveMeta,
+} from './meta.js';
 import { GameRenderer } from './renderer.js';
 
 const $ = (id) => document.getElementById(id);
@@ -29,7 +48,7 @@ function writeStorage(key, val) {
   try {
     localStorage.setItem(key, String(val));
   } catch {
-    // ignore storage quota / private mode
+    // ignore private mode
   }
 }
 
@@ -38,7 +57,9 @@ const canvas = $('game-canvas');
 const hudEl = $('hud');
 const hudScoreEl = $('hud-score');
 const hudBestEl = $('hud-best');
-const hudZoneEl = $('hud-zone');
+const hudStarsEl = $('hud-stars');
+const hudStageEl = $('hud-stage');
+const hudStageFillEl = $('hud-stage-fill');
 const hudHeartsEl = $('hud-hearts');
 const hudShieldEl = $('hud-shield');
 const hudComboEl = $('hud-combo');
@@ -47,6 +68,7 @@ const hudComboMultEl = $('hud-combo-mult');
 const hudFeverWrapEl = $('hud-fever-wrap');
 const hudFeverFillEl = $('hud-fever-fill');
 const hudFeverLabelEl = $('hud-fever-label');
+const hudBankStarsEl = $('hud-bank-stars');
 
 const btnBgm = $('btn-bgm');
 const btnSfx = $('btn-sfx');
@@ -54,29 +76,49 @@ const btnPause = $('btn-pause');
 
 const bannerEl = $('banner');
 const bannerTextEl = $('banner-text');
+const toastEl = $('mission-toast');
+const toastTitleEl = $('toast-title');
+const toastSubEl = $('toast-sub');
 const countdownEl = $('countdown');
 const touchControlsEl = $('touch-controls');
 const ctlJump = $('ctl-jump');
 const ctlDive = $('ctl-dive');
 
 const screenTitle = $('screen-title');
+const screenShop = $('screen-shop');
+const screenMissions = $('screen-missions');
+const screenStages = $('screen-stages');
 const screenPause = $('screen-pause');
 const screenOver = $('screen-over');
 
 const titleBestEl = $('title-best');
-const modeButtons = [ $('mode-normal'), $('mode-challenge') ];
+const titleStarsEl = $('title-stars');
+const btnStageLabelEl = $('btn-stage-label');
+const modeButtons = [$('mode-normal'), $('mode-challenge')];
+
+const shopBankEl = $('shop-bank');
+const tabCosmetics = $('tab-cosmetics');
+const tabUpgrades = $('tab-upgrades');
+const shopCosmeticsList = $('shop-cosmetics-list');
+const shopUpgradesList = $('shop-upgrades-list');
+
+const missionsProgressEl = $('missions-progress');
+const missionsListEl = $('missions-list');
+const stagesUnlockedBadgeEl = $('stages-unlocked-badge');
+const stagesListEl = $('stages-list');
 
 const overRankEl = $('over-rank');
 const overHeadingEl = $('over-heading');
 const overRankTitleEl = $('over-rank-title');
 const overScoreEl = $('over-score');
 const overNewRecordEl = $('over-new-record');
-const statJumpsEl = $('stat-jumps');
+const overEarnedStarsEl = $('over-earned-stars');
+const statStageEl = $('stat-stage');
+const statBouncesEl = $('stat-bounces');
 const statNearMissEl = $('stat-nearmiss');
 const statStarsEl = $('stat-stars');
 const statComboEl = $('stat-combo');
 const statSmashEl = $('stat-smash');
-const statBestEl = $('stat-best');
 
 // ---- Crab Sprite ----
 const crabImg = new Image();
@@ -84,8 +126,10 @@ crabImg.src = './images/kani.png';
 
 const renderer = new GameRenderer(canvas, crabImg);
 
-// ---- Persistent Preferences ----
+// ---- Persistent Preferences & Meta ----
+const meta = loadMeta();
 let selectedMode = readStorage(STORAGE_KEYS.mode, 'normal') === 'challenge' ? 'challenge' : 'normal';
+let selectedStartStage = 0;
 let bestScores = {
   normal: Number(readStorage(STORAGE_KEYS.bestNormal, '0')) || 0,
   challenge: Number(readStorage(STORAGE_KEYS.bestChallenge, '0')) || 0,
@@ -99,15 +143,19 @@ sound.setSfxOn(sfxOn);
 const state = {
   phase: 'title', // 'title' | 'countdown' | 'playing' | 'paused' | 'gameover'
   mode: selectedMode,
+  equippedCosmetic: meta.equippedCosmetic,
   time: 0,
   elapsed: 0,
   scrollDist: 0,
-  skyPhase: 0, // 0=day, 1=sunset, 2=night, 3=dawn
+  stageIndex: 0,
+  stageBlend: 0,
+  stageMeters: 0,
   speed: MODES.normal.startSpeed,
   viewW: 800,
   viewH: 520,
   groundY: 415,
   playerX: 150,
+  camY: 0,
 
   score: 0,
   scoreFloat: 0,
@@ -119,10 +167,10 @@ const state = {
   starStreak: 0,
   starStreakTimer: 0,
 
-  feverGauge: 0, // 0..100
+  feverGauge: 0,
   feverTimer: 0,
 
-  rushState: 'normal', // 'normal' | 'warn' | 'active'
+  rushState: 'normal',
   rushTimer: SCORING.rushInterval,
 
   countdownTimer: 0,
@@ -132,9 +180,11 @@ const state = {
   hitstopTimer: 0,
   shakeMag: 0,
   damageFlash: 0,
+  celebrationFlash: 0,
   bannerTimer: 0,
+  toastTimer: 0,
 
-  nextSpawnDist: 360,
+  nextSpawnDist: 380,
   obstacles: [],
   collectibles: [],
   particles: [],
@@ -143,13 +193,18 @@ const state = {
 
   stats: {
     jumpsOver: 0,
+    bounces: 0,
+    springs: 0,
     nearMisses: 0,
     stars: 0,
     smashes: 0,
+    stageReached: 1,
+    missionBonusStars: 0,
   },
 
   player: {
     altitude: 0,
+    prevAltitude: 0,
     vy: 0,
     grounded: true,
     jumpsUsed: 0,
@@ -175,7 +230,7 @@ function handleResize() {
 window.addEventListener('resize', handleResize);
 handleResize();
 
-// ---- UI Helpers ----
+// ---- UI Sync ----
 function syncSoundButtons() {
   btnBgm.classList.toggle('muted', !bgmOn);
   btnBgm.textContent = bgmOn ? '🎵' : '🔇';
@@ -183,11 +238,20 @@ function syncSoundButtons() {
   btnSfx.textContent = sfxOn ? '🔊' : '🔈';
 }
 
+function syncBankUi() {
+  hudBankStarsEl.textContent = meta.bankStars.toLocaleString();
+  titleStarsEl.textContent = meta.bankStars.toLocaleString();
+  shopBankEl.textContent = meta.bankStars.toLocaleString();
+  state.equippedCosmetic = meta.equippedCosmetic;
+}
+
 function syncModeButtons() {
   modeButtons.forEach((btn) => {
     btn.classList.toggle('active', btn.dataset.mode === selectedMode);
   });
   titleBestEl.textContent = bestScores[selectedMode].toLocaleString();
+  btnStageLabelEl.textContent = STAGES[selectedStartStage].code;
+  syncBankUi();
 }
 
 function syncHeartsHud() {
@@ -199,12 +263,12 @@ function syncHeartsHud() {
   hudHeartsEl.innerHTML = html;
 }
 
-function showBanner(text, duration = 2.4, isFever = false) {
+function showBanner(text, duration = 2.5, variant = '') {
   bannerTextEl.textContent = text;
-  bannerEl.classList.toggle('fever', isFever);
+  bannerEl.classList.toggle('fever', variant === 'fever');
+  bannerEl.classList.toggle('stage', variant === 'stage');
   bannerEl.hidden = false;
   bannerEl.style.animation = 'none';
-  // force reflow for bounce replay
   void bannerEl.offsetWidth;
   bannerEl.style.animation = '';
   state.bannerTimer = duration;
@@ -215,12 +279,22 @@ function hideBanner() {
   state.bannerTimer = 0;
 }
 
+function showMissionToast(mission) {
+  toastTitleEl.textContent = `🏆 ミッション達成！ +${mission.reward}★`;
+  toastSubEl.textContent = mission.text;
+  toastEl.hidden = false;
+  toastEl.style.animation = 'none';
+  void toastEl.offsetWidth;
+  toastEl.style.animation = '';
+  state.toastTimer = 3.2;
+}
+
 function addPopup(text, x, altitude, color = '#facc15', size = 20) {
   state.popups.push({
     text,
     x,
     altitude,
-    vy: 58,
+    vy: 60,
     color,
     size,
     life: 0.95,
@@ -264,7 +338,216 @@ function spawnParticles(x, altitude, count, opts = {}) {
   }
 }
 
-// ---- Scoring & Combo ----
+// ---- Modals Rendering (Shop, Missions, Stages) ----
+let shopReturnTarget = 'title';
+
+function renderShop() {
+  syncBankUi();
+  shopCosmeticsList.innerHTML = '';
+  for (const item of COSMETICS) {
+    const owned = meta.ownedCosmetics.includes(item.id);
+    const equipped = meta.equippedCosmetic === item.id;
+    const canAfford = meta.bankStars >= item.price;
+
+    const row = document.createElement('div');
+    row.className = `shop-item ${equipped ? 'equipped' : ''}`;
+    row.innerHTML = `
+      <div class="item-icon">${item.icon}</div>
+      <div class="item-info">
+        <strong>${item.name}</strong>
+        <small>${item.desc}</small>
+      </div>
+    `;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    if (equipped) {
+      btn.className = 'buy-btn equipped';
+      btn.textContent = 'そうび中';
+    } else if (owned) {
+      btn.className = 'buy-btn owned';
+      btn.textContent = 'そうびする';
+    } else {
+      btn.className = `buy-btn ${canAfford ? '' : 'disabled'}`;
+      btn.textContent = `★ ${item.price}`;
+      btn.disabled = !canAfford;
+    }
+    btn.addEventListener('click', () => {
+      sound.init();
+      const res = buyOrEquipCosmetic(meta, item.id);
+      if (res.ok) {
+        saveMeta(meta);
+        if (res.action === 'bought') sound.shopBuy();
+        else sound.uiClick();
+        renderShop();
+      }
+    });
+    row.appendChild(btn);
+    shopCosmeticsList.appendChild(row);
+  }
+
+  shopUpgradesList.innerHTML = '';
+  for (const up of UPGRADES) {
+    const lv = meta.upgrades[up.id] || 0;
+    const maxed = lv >= up.maxLevel;
+    const price = maxed ? 0 : up.prices[lv];
+    const canAfford = !maxed && meta.bankStars >= price;
+
+    const pips = Array.from({ length: up.maxLevel }, (_, i) =>
+      `<span class="lv-pip ${i < lv ? 'on' : ''}"></span>`
+    ).join('');
+
+    const row = document.createElement('div');
+    row.className = 'shop-item';
+    row.innerHTML = `
+      <div class="item-icon">${up.icon}</div>
+      <div class="item-info">
+        <strong>${up.name} <span style="color:#ea580c">Lv.${lv}/${up.maxLevel}</span></strong>
+        <small>${up.desc}</small>
+        <div class="lv-pips">${pips}</div>
+      </div>
+    `;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    if (maxed) {
+      btn.className = 'buy-btn equipped';
+      btn.textContent = 'MAX';
+      btn.disabled = true;
+    } else {
+      btn.className = `buy-btn ${canAfford ? '' : 'disabled'}`;
+      btn.textContent = `★ ${price}`;
+      btn.disabled = !canAfford;
+      btn.addEventListener('click', () => {
+        sound.init();
+        const res = buyUpgrade(meta, up.id);
+        if (res.ok) {
+          saveMeta(meta);
+          sound.shopBuy();
+          renderShop();
+        }
+      });
+    }
+    row.appendChild(btn);
+    shopUpgradesList.appendChild(row);
+  }
+}
+
+function renderMissions() {
+  missionsProgressEl.textContent = `達成 ${meta.completedMissions.length} / ${MISSION_POOL.length}`;
+  missionsListEl.innerHTML = '';
+  if (meta.activeMissions.length === 0) {
+    missionsListEl.innerHTML = `
+      <div class="mission-item">
+        <div class="item-icon">👑</div>
+        <div class="item-info">
+          <strong>全ミッション完全制覇！！</strong>
+          <small>おめでとう！きみは真の横断歩道レジェンドだ！</small>
+        </div>
+      </div>`;
+    return;
+  }
+  for (const id of meta.activeMissions) {
+    const m = getMissionDef(id);
+    if (!m) continue;
+    const row = document.createElement('div');
+    row.className = 'mission-item';
+    row.innerHTML = `
+      <div class="item-icon">🎯</div>
+      <div class="item-info">
+        <strong>${m.text}</strong>
+        <small>プレイ中に達成で即時ボーナス</small>
+      </div>
+      <div class="mission-reward">+${m.reward}★</div>
+    `;
+    missionsListEl.appendChild(row);
+  }
+}
+
+function renderStages() {
+  stagesUnlockedBadgeEl.textContent = `開放 ${meta.unlockedStage + 1} / ${STAGES.length}`;
+  stagesListEl.innerHTML = '';
+  for (const st of STAGES) {
+    const unlocked = st.id <= meta.unlockedStage;
+    const selected = st.id === selectedStartStage;
+    const row = document.createElement('div');
+    row.className = `stage-item ${selected ? 'selected' : ''} ${unlocked ? '' : 'locked'}`;
+    row.innerHTML = `
+      <div class="item-icon">${['☀️', '🌇', '🌃', '🌌'][st.id]}</div>
+      <div class="item-info">
+        <strong>${st.code}：${st.name}</strong>
+        <small>${unlocked ? st.subtitle : '前のステージをクリアして解放'}</small>
+      </div>
+    `;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    if (!unlocked) {
+      btn.className = 'buy-btn disabled';
+      btn.textContent = '🔒 未開放';
+      btn.disabled = true;
+    } else if (selected) {
+      btn.className = 'buy-btn equipped';
+      btn.textContent = '選択中';
+    } else {
+      btn.className = 'buy-btn owned';
+      btn.textContent = 'えらぶ';
+      btn.addEventListener('click', () => {
+        sound.init();
+        sound.uiClick();
+        selectedStartStage = st.id;
+        state.stageBlend = st.id;
+        syncModeButtons();
+        renderStages();
+      });
+    }
+    row.appendChild(btn);
+    stagesListEl.appendChild(row);
+  }
+}
+
+function openShop(from = 'title') {
+  sound.init();
+  sound.uiClick();
+  shopReturnTarget = from;
+  renderShop();
+  screenTitle.hidden = true;
+  screenOver.hidden = true;
+  screenShop.hidden = false;
+}
+
+function closeShop() {
+  sound.uiClick();
+  screenShop.hidden = true;
+  if (shopReturnTarget === 'gameover') {
+    screenOver.hidden = false;
+  } else {
+    screenTitle.hidden = false;
+    syncModeButtons();
+  }
+}
+
+// ---- Scoring, Missions & Fever ----
+function checkMissionsNow() {
+  const metrics = {
+    stars: state.stats.stars,
+    bounces: state.stats.bounces,
+    nearMisses: state.stats.nearMisses,
+    springs: state.stats.springs,
+    smashes: state.stats.smashes,
+    maxCombo: state.maxCombo,
+    stageReached: state.stats.stageReached,
+    score: state.score,
+  };
+  const completed = evaluateMissions(meta, metrics);
+  if (completed.length > 0) {
+    saveMeta(meta);
+    syncBankUi();
+    sound.missionComplete();
+    for (const m of completed) {
+      state.stats.missionBonusStars += m.reward;
+      showMissionToast(m);
+    }
+  }
+}
+
 function addBonusScore(basePoints, label, x, altitude, color = '#fde047', feverAdd = 0, bumpCombo = false) {
   if (bumpCombo) {
     state.combo++;
@@ -281,7 +564,7 @@ function addBonusScore(basePoints, label, x, altitude, color = '#fde047', feverA
 
   if (label) {
     const text = comboMult > 1 ? `${label} +${pts} (×${comboMult})` : `${label} +${pts}`;
-    addPopup(text, x, altitude, color, pts >= 80 ? 22 : 18);
+    addPopup(text, x, altitude, color, pts >= 90 ? 22 : 18);
   }
 
   if (feverAdd > 0 && state.feverTimer <= 0) {
@@ -293,19 +576,20 @@ function addBonusScore(basePoints, label, x, altitude, color = '#fde047', feverA
 }
 
 function activateFever() {
+  const dur = getUpgradeValue(meta, 'fever') || SCORING.baseFeverDuration;
   state.feverGauge = 100;
-  state.feverTimer = SCORING.feverDuration;
-  state.shakeMag = Math.max(state.shakeMag, 8);
+  state.feverTimer = dur;
+  state.shakeMag = Math.max(state.shakeMag, 9);
   sound.feverStart();
   sound.playTrack('fever');
-  showBanner('🌈 カニ無双 FEVER!! 車をふきとばせ！', 2.8, true);
-  addPopup('FEVER!!', state.playerX + 10, state.player.altitude + 74, '#f472b6', 26);
-  spawnParticles(state.playerX, state.player.altitude + 28, 28, {
+  showBanner('🌈 カニ無双 FEVER!! 車をふきとばせ！', 2.8, 'fever');
+  addPopup('FEVER!!', state.playerX + 10, state.player.altitude + 76, '#f472b6', 26);
+  spawnParticles(state.playerX, state.player.altitude + 28, 30, {
     colors: ['#f43f5e', '#f97316', '#facc15', '#22c55e', '#38bdf8', '#a855f7'],
     speedMin: 90,
-    speedMax: 320,
+    speedMax: 330,
     upMin: 80,
-    upMax: 320,
+    upMax: 330,
     sizeMin: 5,
     sizeMax: 10,
     lifeMin: 0.45,
@@ -314,7 +598,52 @@ function activateFever() {
   });
 }
 
-// ---- Actions (Jump & Dive) ----
+function advanceStage() {
+  const nextIdx = Math.min(STAGES.length - 1, state.stageIndex + 1);
+  state.stageMeters = 0;
+
+  if (nextIdx > state.stageIndex) {
+    state.stageIndex = nextIdx;
+    state.stats.stageReached = Math.max(state.stats.stageReached, state.stageIndex + 1);
+    if (state.stageIndex > meta.unlockedStage) {
+      meta.unlockedStage = state.stageIndex;
+      saveMeta(meta);
+    }
+  }
+
+  const st = STAGES[state.stageIndex];
+  state.celebrationFlash = 1.0;
+  state.shakeMag = Math.max(state.shakeMag, 7);
+  sound.stageClear();
+  if (state.feverTimer <= 0) {
+    sound.playTrack(st.bgm);
+  }
+  addBonusScore(SCORING.stageClear, '🎊 STAGE CLEAR!', state.playerX + 40, 145, '#fde047', 24, true);
+  showBanner(`✨ ${st.code}：${st.name} 突入！`, 3.0, 'stage');
+
+  // Shield Lv.3 restores bubble shield on stage clear!
+  if (getUpgradeValue(meta, 'shield') >= 3 && !state.player.hasShield) {
+    state.player.hasShield = true;
+    hudShieldEl.hidden = false;
+    addPopup('🫧 バリア復活!', state.playerX, state.player.altitude + 92, '#38bdf8', 19);
+  }
+
+  spawnParticles(state.playerX + 80, 120, 32, {
+    colors: ['#facc15', '#38bdf8', '#f472b6', '#4ade80', '#ffffff'],
+    speedMin: 100,
+    speedMax: 340,
+    upMin: 80,
+    upMax: 320,
+    sizeMin: 5,
+    sizeMax: 10,
+    lifeMin: 0.5,
+    lifeMax: 0.95,
+    shape: 'star',
+  });
+  checkMissionsNow();
+}
+
+// ---- Actions ----
 function executeJump(isDouble) {
   const p = state.player;
   p.grounded = false;
@@ -344,9 +673,8 @@ function executeJump(isDouble) {
     p.jumpsUsed = 2;
     p.scaleX = 0.86;
     p.scaleY = 1.2;
-    p.spinVel = 12.5; // Joyful 360° crab flip!
+    p.spinVel = 12.8;
     sound.doubleJump();
-    // Bubble ring + ocean sparkles
     state.particles.push({
       x: state.playerX,
       altitude: p.altitude + 8,
@@ -403,15 +731,15 @@ function triggerDive() {
 
   if (!p.grounded && p.vy > PHYSICS.fastFallVy * 0.8) {
     p.vy = PHYSICS.fastFallVy;
-    p.scaleX = 0.78;
-    p.scaleY = 1.28;
+    p.scaleX = 0.76;
+    p.scaleY = 1.3;
     sound.dive();
-    spawnParticles(state.playerX, p.altitude + 30, 6, {
+    spawnParticles(state.playerX, p.altitude + 30, 7, {
       colors: ['#7dd3fc', '#ffffff'],
       speedMin: 20,
-      speedMax: 80,
+      speedMax: 85,
       upMin: 80,
-      upMax: 180,
+      upMax: 190,
       sizeMin: 3,
       sizeMax: 6,
       lifeMin: 0.16,
@@ -426,8 +754,11 @@ function resetRun(modeId) {
   state.mode = modeId;
   const cfg = MODES[modeId];
   state.elapsed = 0;
-  state.skyPhase = 0;
-  state.speed = cfg.startSpeed;
+  state.stageIndex = selectedStartStage;
+  state.stageBlend = selectedStartStage;
+  state.stageMeters = 0;
+  state.speed = cfg.startSpeed + selectedStartStage * 24;
+  state.camY = 0;
   state.score = 0;
   state.scoreFloat = 0;
   state.lives = cfg.lives;
@@ -444,23 +775,36 @@ function resetRun(modeId) {
   state.hitstopTimer = 0;
   state.shakeMag = 0;
   state.damageFlash = 0;
+  state.celebrationFlash = 0;
+  state.goTextTimer = 0;
   state.nextSpawnDist = 420;
   state.obstacles = [];
   state.collectibles = [];
   state.particles = [];
   state.popups = [];
   state.trail = [];
-  state.stats = { jumpsOver: 0, nearMisses: 0, stars: 0, smashes: 0 };
+  state.stats = {
+    jumpsOver: 0,
+    bounces: 0,
+    springs: 0,
+    nearMisses: 0,
+    stars: 0,
+    smashes: 0,
+    stageReached: selectedStartStage + 1,
+    missionBonusStars: 0,
+  };
 
+  const startWithShield = getUpgradeValue(meta, 'shield') >= 1;
   Object.assign(state.player, {
     altitude: 0,
+    prevAltitude: 0,
     vy: 0,
     grounded: true,
     jumpsUsed: 0,
     coyoteTimer: 0,
     jumpBufferTimer: 0,
     jumpHeld: false,
-    hasShield: false,
+    hasShield: startWithShield,
     invulnTimer: 0,
     scaleX: 1,
     scaleY: 1,
@@ -469,9 +813,12 @@ function resetRun(modeId) {
   });
 
   hideBanner();
+  toastEl.hidden = true;
   syncHeartsHud();
+  syncBankUi();
   hudBestEl.textContent = bestScores[modeId].toLocaleString();
-  hudShieldEl.hidden = true;
+  hudStarsEl.textContent = '0';
+  hudShieldEl.hidden = !startWithShield;
   hudComboEl.hidden = true;
   hudFeverFillEl.style.width = '0%';
   hudFeverWrapEl.classList.remove('active');
@@ -482,6 +829,9 @@ function setPhase(nextPhase) {
   hudEl.dataset.phase = nextPhase;
 
   screenTitle.hidden = nextPhase !== 'title';
+  screenShop.hidden = true;
+  screenMissions.hidden = true;
+  screenStages.hidden = true;
   screenPause.hidden = nextPhase !== 'paused';
   screenOver.hidden = nextPhase !== 'gameover';
   btnPause.hidden = nextPhase !== 'playing' && nextPhase !== 'paused';
@@ -493,11 +843,11 @@ function startGame() {
   sound.init();
   resetRun(selectedMode);
   setPhase('countdown');
-  state.countdownTimer = 0.62;
+  state.countdownTimer = 0.58;
   state.countdownStep = 3;
   showCountdownText('3');
   sound.countdown(false);
-  sound.playTrack('play');
+  sound.playTrack(STAGES[state.stageIndex].bgm);
 }
 
 function showCountdownText(text) {
@@ -518,7 +868,7 @@ function resumeGame() {
   if (state.phase !== 'paused') return;
   sound.init();
   setPhase('playing');
-  sound.playTrack(state.feverTimer > 0 ? 'fever' : 'play');
+  sound.playTrack(state.feverTimer > 0 ? 'fever' : STAGES[state.stageIndex].bgm);
 }
 
 function returnToTitle() {
@@ -534,6 +884,16 @@ function triggerGameOver() {
   sound.stopTrack();
   sound.gameOver();
   hideBanner();
+
+  // Bank collected stars & lifetime stats!
+  const earnedStars = state.stats.stars;
+  meta.bankStars += earnedStars;
+  meta.lifetime.runs++;
+  meta.lifetime.totalStars += earnedStars;
+  meta.lifetime.totalBounces += state.stats.bounces;
+  meta.lifetime.totalSmashes += state.stats.smashes;
+  saveMeta(meta);
+  syncBankUi();
 
   const finalScore = state.score;
   const prevBest = bestScores[state.mode];
@@ -553,26 +913,27 @@ function triggerGameOver() {
   overHeadingEl.textContent = isNewRecord ? 'すごい！記録こうしん！' : 'おつかれさま！';
   overScoreEl.textContent = finalScore.toLocaleString();
   overNewRecordEl.hidden = !isNewRecord;
+  const totalBanked = earnedStars + state.stats.missionBonusStars;
+  overEarnedStarsEl.textContent = `★ +${totalBanked.toLocaleString()} 獲得！`;
 
-  statJumpsEl.textContent = state.stats.jumpsOver;
+  statStageEl.textContent = `STAGE ${state.stats.stageReached}`;
+  statBouncesEl.textContent = state.stats.bounces;
   statNearMissEl.textContent = state.stats.nearMisses;
   statStarsEl.textContent = state.stats.stars;
   statComboEl.textContent = state.maxCombo;
   statSmashEl.textContent = state.stats.smashes;
-  statBestEl.textContent = bestScores[state.mode].toLocaleString();
 }
 
 function takeHit(ob) {
   const p = state.player;
   if (p.hasShield) {
-    // Bubble shield absorbs the impact!
     p.hasShield = false;
     p.invulnTimer = 1.1;
     hudShieldEl.hidden = true;
     state.hitstopTimer = 0.055;
     state.shakeMag = 9;
     sound.shieldBreak();
-    addPopup('バリアガード！', state.playerX, p.altitude + 68, '#38bdf8', 20);
+    addPopup('🫧 バリアガード!', state.playerX, p.altitude + 68, '#38bdf8', 20);
     spawnParticles(state.playerX, p.altitude + 28, 18, {
       colors: ['#38bdf8', '#e0f2fe', '#c084fc'],
       speedMin: 70,
@@ -582,7 +943,6 @@ function takeHit(ob) {
       sizeMin: 4,
       sizeMax: 8,
     });
-    // Knock obstacle harmlessly aside
     ob.smashed = true;
     ob.vx = 220;
     ob.vy = 320;
@@ -616,7 +976,6 @@ function takeHit(ob) {
   } else {
     sound.hurt();
     addPopup('いたっ！', state.playerX, p.altitude + 66, '#f87171', 22);
-    // Small protective hop
     p.vy = Math.max(p.vy, 380);
     p.grounded = false;
   }
@@ -625,6 +984,7 @@ function takeHit(ob) {
 // ---- Update Simulation ----
 function updatePlayer(dt) {
   const p = state.player;
+  p.prevAltitude = p.altitude;
   if (p.invulnTimer > 0) p.invulnTimer = Math.max(0, p.invulnTimer - dt);
   if (p.jumpBufferTimer > 0) p.jumpBufferTimer = Math.max(0, p.jumpBufferTimer - dt);
 
@@ -634,7 +994,6 @@ function updatePlayer(dt) {
     p.coyoteTimer = Math.max(0, p.coyoteTimer - dt);
   }
 
-  // Gravity (with variable jump height when releasing jump early)
   if (!p.grounded) {
     const gMult = !p.jumpHeld && p.vy > 220 ? PHYSICS.cutGravityMult : 1.0;
     p.vy -= PHYSICS.gravity * gMult * dt;
@@ -662,19 +1021,16 @@ function updatePlayer(dt) {
         lifeMax: 0.32,
       });
 
-      // Execute buffered jump right on touchdown!
       if (p.jumpBufferTimer > 0) {
         executeJump(false);
       }
     }
   }
 
-  // Smooth spring back squash & stretch
   const damp = 1 - Math.exp(-15 * dt);
   p.scaleX += (1 - p.scaleX) * damp;
   p.scaleY += (1 - p.scaleY) * damp;
 
-  // Double jump flip rotation
   if (Math.abs(p.spinVel) > 0.1) {
     p.rotation += p.spinVel * dt;
     if (p.rotation >= Math.PI * 2) {
@@ -682,16 +1038,19 @@ function updatePlayer(dt) {
       p.spinVel = 0;
     }
   } else if (!p.grounded) {
-    const targetRot = clamp(-p.vy / 2600, -0.22, 0.24);
+    const targetRot = clamp(-p.vy / 2600, -0.24, 0.26);
     p.rotation += (targetRot - p.rotation) * damp;
   } else {
     p.rotation += (0 - p.rotation) * damp;
   }
 
-  // Fever trail history
+  // Smooth vertical camera pan upward when flying high on springboard sky routes!
+  const targetCamY = p.altitude > 130 ? clamp((p.altitude - 130) * 0.52, 0, 118) : 0;
+  state.camY += (targetCamY - state.camY) * (1 - Math.exp(-7 * dt));
+
   if (state.feverTimer > 0) {
     state.trail.push({ x: state.playerX, altitude: p.altitude });
-    if (state.trail.length > 8) state.trail.shift();
+    if (state.trail.length > 9) state.trail.shift();
     for (const tr of state.trail) tr.x -= state.speed * dt * 0.55;
   } else if (state.trail.length > 0) {
     state.trail.length = 0;
@@ -704,32 +1063,34 @@ function updateRushCycle(dt) {
     state.rushState = 'warn';
     state.rushTimer = SCORING.rushWarnDuration;
     sound.signalWarn();
-    showBanner('🚦 信号点滅！まもなくラッシュ！', 2.8, false);
+    showBanner('🚦 信号点滅！まもなくラッシュ！', 2.8);
   } else if (state.rushState === 'warn' && state.rushTimer <= 0) {
     state.rushState = 'active';
     state.rushTimer = SCORING.rushDuration;
     sound.signalWarn();
-    showBanner('🔥 ラッシュタイム！スコア 1.5倍！', 2.6, false);
+    showBanner('🔥 ラッシュタイム！スコア 1.5倍！', 2.6);
   } else if (state.rushState === 'active' && state.rushTimer <= 0) {
     state.rushState = 'normal';
     state.rushTimer = SCORING.rushInterval;
-    addBonusScore(SCORING.rushClear, '🚦 ラッシュ突破!', state.playerX + 40, 120, '#4ade80', 18, true);
+    addBonusScore(SCORING.rushClear, '🚦 ラッシュ突破!', state.playerX + 40, 125, '#4ade80', 20, true);
     sound.jumpOver();
   }
 }
 
 function updateWorld(dt) {
   state.time += dt;
-
-  // Decay screen effects
   state.shakeMag = Math.max(0, state.shakeMag - dt * 36);
   state.damageFlash = Math.max(0, state.damageFlash - dt * 3.2);
+  state.celebrationFlash = Math.max(0, state.celebrationFlash - dt * 2.2);
 
   if (state.bannerTimer > 0) {
     state.bannerTimer -= dt;
     if (state.bannerTimer <= 0) bannerEl.hidden = true;
   }
-
+  if (state.toastTimer > 0) {
+    state.toastTimer -= dt;
+    if (state.toastTimer <= 0) toastEl.hidden = true;
+  }
   if (state.goTextTimer > 0) {
     state.goTextTimer -= dt;
     if (state.goTextTimer <= 0 && state.phase === 'playing') {
@@ -737,7 +1098,6 @@ function updateWorld(dt) {
     }
   }
 
-  // Particles & Popups animate smoothly in all non-paused phases
   for (let i = state.particles.length - 1; i >= 0; i--) {
     const pt = state.particles[i];
     pt.life -= dt;
@@ -767,9 +1127,9 @@ function updateWorld(dt) {
   }
 
   if (state.phase === 'title') {
-    // Gentle scenic scrolling behind Title screen
-    state.scrollDist += 110 * dt;
-    state.skyPhase = (state.skyPhase + dt / 40) % 4;
+    state.scrollDist += 115 * dt;
+    // Gently preview selected start stage in the live diorama behind title
+    state.stageBlend += (selectedStartStage - state.stageBlend) * (1 - Math.exp(-3.5 * dt));
     return;
   }
 
@@ -780,7 +1140,7 @@ function updateWorld(dt) {
     if (state.countdownTimer <= 0) {
       state.countdownStep--;
       if (state.countdownStep >= 1) {
-        state.countdownTimer = 0.62;
+        state.countdownTimer = 0.58;
         showCountdownText(String(state.countdownStep));
         sound.countdown(false);
       } else if (state.countdownStep === 0) {
@@ -794,32 +1154,29 @@ function updateWorld(dt) {
     return;
   }
 
-  if (state.phase !== 'playing') {
-    return;
-  }
+  if (state.phase !== 'playing') return;
 
-  // Hitstop freeze frame for juicy impact feel
   if (state.hitstopTimer > 0) {
     state.hitstopTimer -= dt;
     return;
   }
 
   state.elapsed += dt;
-  state.skyPhase = (state.skyPhase + dt / 32) % 4;
+  // Smooth biome visual blend toward current stageIndex
+  state.stageBlend += (state.stageIndex - state.stageBlend) * (1 - Math.exp(-0.9 * dt));
 
-  // Fever timer
   if (state.feverTimer > 0) {
+    const feverMax = getUpgradeValue(meta, 'fever') || SCORING.baseFeverDuration;
     state.feverTimer -= dt;
-    state.feverGauge = clamp((state.feverTimer / SCORING.feverDuration) * 100, 0, 100);
+    state.feverGauge = clamp((state.feverTimer / feverMax) * 100, 0, 100);
     if (state.feverTimer <= 0) {
       state.feverTimer = 0;
       state.feverGauge = 0;
       state.player.invulnTimer = Math.max(state.player.invulnTimer, 1.0);
-      sound.playTrack('play');
+      sound.playTrack(STAGES[state.stageIndex].bgm);
     }
   }
 
-  // Combo & star streak timers
   if (state.comboTimer > 0) {
     state.comboTimer -= dt;
     if (state.comboTimer <= 0) state.combo = 0;
@@ -833,13 +1190,16 @@ function updateWorld(dt) {
 
   const isFever = state.feverTimer > 0;
   const isRush = state.rushState === 'active';
-  state.speed = computeWorldSpeed(state.elapsed, state.mode, isRush, isFever);
-  sound.setTempoMultiplier(1 + (state.speed - 310) / 1400);
+  state.speed = computeWorldSpeed(state.elapsed, state.mode, state.stageIndex, isRush, isFever);
+  sound.setTempoMultiplier(1 + (state.speed - 320) / 1450);
 
   const stepDist = state.speed * dt;
   state.scrollDist += stepDist;
+  state.stageMeters += stepDist / 26;
+  if (state.stageMeters >= SCORING.stageLengthMeters) {
+    advanceStage();
+  }
 
-  // Distance score tick
   const modeMult = MODES[state.mode].scoreMult;
   const rushMult = isRush ? 1.5 : 1.0;
   state.scoreFloat += SCORING.distancePerSec * modeMult * rushMult * dt;
@@ -847,7 +1207,6 @@ function updateWorld(dt) {
 
   updatePlayer(dt);
 
-  // Subtle ground scuttle dust
   if (state.player.grounded && Math.random() < dt * 9) {
     spawnParticles(state.playerX - 18, 2, 1, {
       colors: ['rgba(255,255,255,0.75)'],
@@ -866,15 +1225,17 @@ function updateWorld(dt) {
   // Spawn patterns
   state.nextSpawnDist -= stepDist;
   if (state.nextSpawnDist <= 0) {
-    const spawnX = Math.max(state.viewW + 70, state.playerX + 520);
+    const spawnX = Math.max(state.viewW + 90, state.playerX + 540);
     const pattern = generatePattern({
       spawnX,
       elapsed: state.elapsed,
       speed: state.speed,
+      stageIndex: state.stageIndex,
       isRush,
       lives: state.lives,
       maxLives: state.maxLives,
       hasShield: state.player.hasShield,
+      shieldUpgradeLv: meta.upgrades.shield || 0,
     });
     state.obstacles.push(...pattern.obstacles);
     state.collectibles.push(...pattern.collectibles);
@@ -882,8 +1243,10 @@ function updateWorld(dt) {
   }
 
   const crabBox = getCrabHitbox(state.playerX, state.player.altitude);
+  const magnetRadius = getUpgradeValue(meta, 'magnet');
+  const crabCenterY = state.player.altitude + 24;
 
-  // Update & collide collectibles
+  // Collectibles (+ Star Magnet attraction!)
   for (let i = state.collectibles.length - 1; i >= 0; i--) {
     const c = state.collectibles[i];
     c.x -= stepDist;
@@ -892,6 +1255,17 @@ function updateWorld(dt) {
       continue;
     }
     if (c.collected) continue;
+
+    if (c.type === 'star' && magnetRadius > 0) {
+      const dx = state.playerX - c.x;
+      const dy = crabCenterY - c.airY;
+      const dist = Math.hypot(dx, dy);
+      if (dist < magnetRadius && dist > 1) {
+        const pull = (1 - dist / magnetRadius) * 620 * dt;
+        c.x += (dx / dist) * pull;
+        c.airY += (dy / dist) * pull;
+      }
+    }
 
     const cBox = {
       left: c.x - c.radius,
@@ -917,6 +1291,7 @@ function updateWorld(dt) {
           sizeMax: 8,
           shape: 'star',
         });
+        checkMissionsNow();
       } else if (c.type === 'shield') {
         state.player.hasShield = true;
         hudShieldEl.hidden = false;
@@ -935,7 +1310,7 @@ function updateWorld(dt) {
           syncHeartsHud();
           addPopup('❤️ ライフ回復!', c.x, c.airY + 24, '#fb7185', 20);
         } else {
-          addBonusScore(100, '❤️ ボーナス', c.x, c.airY + 24, '#fb7185', 20, false);
+          addBonusScore(120, '❤️ ボーナス', c.x, c.airY + 24, '#fb7185', 20, false);
         }
         sound.heartUp();
         spawnParticles(c.x, c.airY, 14, {
@@ -951,33 +1326,43 @@ function updateWorld(dt) {
     }
   }
 
-  // Update & collide obstacles
+  // Obstacles (+ Springboard, Stomp Bounce, Telegraph & Smash!)
   for (let i = state.obstacles.length - 1; i >= 0; i--) {
     const ob = state.obstacles[i];
+
+    if (ob.squash > 0) ob.squash = Math.max(0, ob.squash - dt * 5.2);
 
     if (ob.smashed) {
       ob.x += ob.vx * dt;
       ob.airY += ob.vy * dt;
       ob.vy -= 1400 * dt;
       ob.rot += ob.vrot * dt;
-      if (ob.x > state.viewW + 250 || ob.airY < -200) {
+      if (ob.x > state.viewW + 260 || ob.airY < -200) {
         state.obstacles.splice(i, 1);
       }
       continue;
     }
 
     ob.x -= stepDist * ob.speedMult;
-    ob.wheelPhase -= dt * (state.speed * ob.speedMult) / 14;
-    if (ob.x + ob.w < -120) {
+    ob.wheelPhase -= (dt * state.speed * ob.speedMult) / 14;
+
+    // Danger telegraph audio cue right before fast hazard enters viewport
+    const spec = OBSTACLE_SPECS[ob.kind];
+    if (spec.telegraph && !ob.telegraphDone && ob.x < state.viewW + 210 && ob.x > state.viewW) {
+      ob.telegraphDone = true;
+      sound.telegraph();
+    }
+
+    if (ob.x + ob.w < -140) {
       state.obstacles.splice(i, 1);
       continue;
     }
 
     const obBox = getObstacleHitbox(ob);
 
-    // Track horizontal overlap for jump-over & near-miss scoring
+    // Track horizontal proximity
     const horizNear = obBox.left < crabBox.right + 18 && obBox.right > crabBox.left - 18;
-    if (horizNear) {
+    if (horizNear && !spec.isSpring) {
       const dist = rectDistance(crabBox, obBox);
       if (dist < ob.minClearance) ob.minClearance = dist;
       if (crabBox.bottom >= obBox.top - 4 && obBox.left < crabBox.right && obBox.right > crabBox.left) {
@@ -985,16 +1370,61 @@ function updateWorld(dt) {
       }
     }
 
-    // Collision check
     if (rectsOverlap(crabBox, obBox)) {
+      // 1. Beach-Ball Springboard!
+      if (spec.isSpring) {
+        if (!ob.bounced) {
+          ob.bounced = true;
+          ob.squash = 1.0;
+          const p = state.player;
+          p.altitude = Math.max(p.altitude, obBox.top + 2);
+          p.vy = PHYSICS.springBounceVy;
+          p.grounded = false;
+          p.jumpsUsed = 0; // Fresh double jump mid-air!
+          p.scaleX = 0.74;
+          p.scaleY = 1.32;
+          p.spinVel = 14;
+          state.stats.springs++;
+          state.shakeMag = Math.max(state.shakeMag, 6);
+          sound.springLaunch();
+          addBonusScore(SCORING.stompBounce, '🚀 SKY JUMP!', state.playerX + 10, p.altitude + 68, '#38bdf8', 16, true);
+          state.particles.push({
+            x: ob.x + ob.w * 0.5,
+            altitude: ob.h,
+            vx: -30,
+            vy: 0,
+            size: 22,
+            color: '#facc15',
+            shape: 'ring',
+            gravity: 0,
+            rot: 0,
+            vrot: 0,
+            life: 0.38,
+            maxLife: 0.38,
+          });
+          spawnParticles(ob.x + ob.w * 0.5, ob.h, 16, {
+            colors: ['#f43f5e', '#facc15', '#38bdf8', '#ffffff'],
+            speedMin: 80,
+            speedMax: 240,
+            upMin: 80,
+            upMax: 260,
+            sizeMin: 4,
+            sizeMax: 9,
+            shape: 'star',
+          });
+          checkMissionsNow();
+        }
+        continue;
+      }
+
+      // 2. Fever Smash!
       if (isFever) {
-        // SMASH the vehicle off screen!
         ob.smashed = true;
-        ob.vx = 520 + Math.random() * 240;
-        ob.vy = 460 + Math.random() * 220;
+        ob.vx = 540 + Math.random() * 240;
+        ob.vy = 470 + Math.random() * 220;
         ob.vrot = 9 + Math.random() * 6;
         state.stats.smashes++;
-        state.hitstopTimer = 0.042;
+        state.hitstopTimer = 0.04;
         state.shakeMag = 11;
         sound.smash();
         addBonusScore(SCORING.smash, '💥 SMASH!', ob.x + ob.w * 0.3, ob.airY + ob.h * 0.7, '#f472b6', 0, true);
@@ -1008,7 +1438,66 @@ function updateWorld(dt) {
           sizeMax: 10,
           shape: 'star',
         });
-      } else if (state.player.invulnTimer <= 0) {
+        checkMissionsNow();
+        continue;
+      }
+
+      // 3. Heroic Roof Stomp Bounce!
+      if (!ob.bounced && isStompBounce(state.player.prevAltitude, state.player.vy, obBox, ob)) {
+        ob.bounced = true;
+        ob.cleared = true;
+        ob.squash = 1.0;
+        const p = state.player;
+        p.altitude = obBox.top + 3;
+        p.vy = PHYSICS.stompBounceVy;
+        p.grounded = false;
+        p.jumpsUsed = 0; // Rewards skilled play with a fresh double jump!
+        p.scaleX = 1.28;
+        p.scaleY = 0.74;
+        p.spinVel = 11.5;
+        state.stats.bounces++;
+        state.hitstopTimer = 0.036;
+        state.shakeMag = Math.max(state.shakeMag, 6.5);
+        sound.stompBounce();
+        addBonusScore(
+          SCORING.stompBounce,
+          '⚡ BOUNCE!',
+          state.playerX + 8,
+          p.altitude + 68,
+          '#fb923c',
+          SCORING.feverFromBounce,
+          true,
+        );
+        state.particles.push({
+          x: state.playerX,
+          altitude: obBox.top + 4,
+          vx: -40,
+          vy: 0,
+          size: 20,
+          color: '#fef08a',
+          shape: 'ring',
+          gravity: 0,
+          rot: 0,
+          vrot: 0,
+          life: 0.32,
+          maxLife: 0.32,
+        });
+        spawnParticles(state.playerX, obBox.top + 4, 14, {
+          colors: ['#facc15', '#fb923c', '#ffffff'],
+          speedMin: 70,
+          speedMax: 220,
+          upMin: 60,
+          upMax: 220,
+          sizeMin: 4,
+          sizeMax: 8,
+          shape: 'star',
+        });
+        checkMissionsNow();
+        continue;
+      }
+
+      // 4. Otherwise take hit (if not invulnerable)
+      if (state.player.invulnTimer <= 0 && !ob.bounced) {
         takeHit(ob);
         if (state.phase === 'gameover') return;
       }
@@ -1016,7 +1505,7 @@ function updateWorld(dt) {
     }
 
     // Passed cleanly behind the crab!
-    if (!ob.cleared && obBox.right < crabBox.left) {
+    if (!ob.cleared && !spec.isSpring && obBox.right < crabBox.left) {
       ob.cleared = true;
       if (ob.minClearance <= 30 && ob.minClearance > 0) {
         state.stats.nearMisses++;
@@ -1040,6 +1529,7 @@ function updateWorld(dt) {
           sizeMin: 3,
           sizeMax: 6,
         });
+        checkMissionsNow();
       } else if (ob.jumpedOver) {
         state.stats.jumpsOver++;
         sound.jumpOver();
@@ -1052,6 +1542,7 @@ function updateWorld(dt) {
           SCORING.feverFromJumpOver,
           true,
         );
+        checkMissionsNow();
       }
     }
   }
@@ -1059,11 +1550,15 @@ function updateWorld(dt) {
 
 function updateHud() {
   hudScoreEl.textContent = state.score.toLocaleString();
-  const displayBest = Math.max(bestScores[state.mode], state.score);
-  hudBestEl.textContent = displayBest.toLocaleString();
+  hudBestEl.textContent = Math.max(bestScores[state.mode], state.score).toLocaleString();
+  hudStarsEl.textContent = state.stats.stars.toLocaleString();
 
-  const pal = sampleSkyPalette(state.skyPhase);
-  hudZoneEl.textContent = state.rushState === 'active' ? '🔥 ラッシュ中！' : pal.name;
+  const st = STAGES[state.stageIndex];
+  hudStageEl.textContent = state.rushState === 'active'
+    ? `🔥 ${st.code} ラッシュ中！`
+    : `${st.code} ${st.name}`;
+  const pct = clamp((state.stageMeters / SCORING.stageLengthMeters) * 100, 0, 100);
+  hudStageFillEl.style.width = `${pct.toFixed(1)}%`;
 
   if (state.combo >= 2 && state.phase === 'playing') {
     hudComboEl.hidden = false;
@@ -1096,9 +1591,21 @@ function loop(ts) {
 }
 
 // ---- Input Wiring ----
+function isModalOpen() {
+  return !screenShop.hidden || !screenMissions.hidden || !screenStages.hidden;
+}
+
 window.addEventListener('keydown', (e) => {
   if (e.repeat) return;
   const code = e.code;
+
+  if (code === 'Escape') {
+    if (!screenShop.hidden) { closeShop(); return; }
+    if (!screenMissions.hidden) { screenMissions.hidden = true; screenTitle.hidden = false; return; }
+    if (!screenStages.hidden) { screenStages.hidden = true; screenTitle.hidden = false; return; }
+  }
+
+  if (isModalOpen()) return;
 
   if (code === 'Space' || code === 'ArrowUp' || code === 'KeyW') {
     e.preventDefault();
@@ -1130,7 +1637,6 @@ window.addEventListener('keyup', (e) => {
   }
 });
 
-// Canvas tap & swipe-down support
 let touchStartY = null;
 canvas.addEventListener('pointerdown', (e) => {
   if (state.phase !== 'playing' && state.phase !== 'countdown') return;
@@ -1155,7 +1661,6 @@ window.addEventListener('pointercancel', () => {
   releaseJump();
 });
 
-// Dedicated mobile action buttons
 ctlJump.addEventListener('pointerdown', (e) => {
   e.preventDefault();
   e.stopPropagation();
@@ -1171,14 +1676,61 @@ ctlDive.addEventListener('pointerdown', (e) => {
   triggerDive();
 });
 
-// UI Buttons
+// Title & Modal Buttons
 modeButtons.forEach((btn) => {
   btn.addEventListener('click', () => {
     sound.init();
+    sound.uiClick();
     selectedMode = btn.dataset.mode;
     writeStorage(STORAGE_KEYS.mode, selectedMode);
     syncModeButtons();
   });
+});
+
+$('btn-open-shop').addEventListener('click', () => openShop('title'));
+$('btn-over-shop').addEventListener('click', () => openShop('gameover'));
+$('btn-close-shop').addEventListener('click', closeShop);
+
+tabCosmetics.addEventListener('click', () => {
+  sound.uiClick();
+  tabCosmetics.classList.add('active');
+  tabUpgrades.classList.remove('active');
+  shopCosmeticsList.hidden = false;
+  shopUpgradesList.hidden = true;
+});
+
+tabUpgrades.addEventListener('click', () => {
+  sound.uiClick();
+  tabUpgrades.classList.add('active');
+  tabCosmetics.classList.remove('active');
+  shopCosmeticsList.hidden = true;
+  shopUpgradesList.hidden = false;
+});
+
+$('btn-open-missions').addEventListener('click', () => {
+  sound.init();
+  sound.uiClick();
+  renderMissions();
+  screenTitle.hidden = true;
+  screenMissions.hidden = false;
+});
+$('btn-close-missions').addEventListener('click', () => {
+  sound.uiClick();
+  screenMissions.hidden = true;
+  screenTitle.hidden = false;
+});
+
+$('btn-open-stages').addEventListener('click', () => {
+  sound.init();
+  sound.uiClick();
+  renderStages();
+  screenTitle.hidden = true;
+  screenStages.hidden = false;
+});
+$('btn-close-stages').addEventListener('click', () => {
+  sound.uiClick();
+  screenStages.hidden = true;
+  screenTitle.hidden = false;
 });
 
 $('btn-start').addEventListener('click', startGame);
@@ -1208,7 +1760,6 @@ btnSfx.addEventListener('click', () => {
   syncSoundButtons();
 });
 
-// Auto-pause when tab loses visibility
 document.addEventListener('visibilitychange', () => {
   if (document.hidden && state.phase === 'playing') {
     pauseGame();
@@ -1224,14 +1775,15 @@ syncSoundButtons();
 syncModeButtons();
 setPhase('title');
 
-// Dev & verification hook
 window.__kaniDX = {
   state,
+  meta,
   startGame,
   pressJump,
   releaseJump,
   triggerDive,
   activateFever,
+  advanceStage,
   step: (seconds) => {
     const dt = 1 / 60;
     const steps = Math.max(1, Math.round(seconds / dt));

@@ -1,4 +1,4 @@
-import { CRAB, MODES, OBSTACLE_SPECS, RANKS, SCORING, SKY_KEYFRAMES } from './config.js';
+import { CRAB, MODES, OBSTACLE_SPECS, RANKS, SCORING, STAGES } from './config.js';
 
 export function clamp(v, min, max) {
   return Math.max(min, Math.min(max, v));
@@ -22,50 +22,54 @@ export function rgb(c, alpha = 1) {
 }
 
 /**
- * Compute interpolated sky/environment palette from continuous cycle progress (0..4, wraps).
+ * Smoothly blend between two stage palettes (stageProgress: 0..3+, clamps cleanly at Stage 4).
  */
-export function sampleSkyPalette(cyclePhase) {
-  const n = SKY_KEYFRAMES.length;
-  const wrapped = ((cyclePhase % n) + n) % n;
-  const idx = Math.floor(wrapped);
-  const next = (idx + 1) % n;
-  const t = wrapped - idx;
-  // Smoothstep for gentle transitions
+export function sampleStagePalette(stageBlend) {
+  const maxIdx = STAGES.length - 1;
+  const clamped = clamp(stageBlend, 0, maxIdx);
+  const idx = Math.floor(clamped);
+  const next = Math.min(maxIdx, idx + 1);
+  const t = clamped - idx;
   const s = t * t * (3 - 2 * t);
-  const a = SKY_KEYFRAMES[idx];
-  const b = SKY_KEYFRAMES[next];
+  const a = STAGES[idx];
+  const b = STAGES[next];
   return {
+    stageIndex: Math.round(clamped),
+    code: s < 0.5 ? a.code : b.code,
     name: s < 0.5 ? a.name : b.name,
-    phase: wrapped,
+    ambient: s < 0.5 ? a.ambient : b.ambient,
+    phase: clamped,
     skyTop: lerpColor(a.skyTop, b.skyTop, s),
+    skyMid: lerpColor(a.skyMid, b.skyMid, s),
     skyBot: lerpColor(a.skyBot, b.skyBot, s),
-    sunColor: lerpColor(a.sunColor, b.sunColor, s),
+    oceanTop: lerpColor(a.oceanTop, b.oceanTop, s),
+    oceanBot: lerpColor(a.oceanBot, b.oceanBot, s),
+    mountain: lerpColor(a.mountain, b.mountain, s),
     farCity: lerpColor(a.farCity, b.farCity, s),
     midCity: lerpColor(a.midCity, b.midCity, s),
-    cloudColor: lerpColor(a.cloudColor, b.cloudColor, s),
+    sunColor: lerpColor(a.sunColor, b.sunColor, s),
+    cloudTop: lerpColor(a.cloudTop, b.cloudTop, s),
+    cloudShade: lerpColor(a.cloudShade, b.cloudShade, s),
+    roadTop: lerpColor(a.roadTop, b.roadTop, s),
+    roadBot: lerpColor(a.roadBot, b.roadBot, s),
     windowAlpha: lerp(a.windowAlpha, b.windowAlpha, s),
     starAlpha: lerp(a.starAlpha, b.starAlpha, s),
     lampGlow: lerp(a.lampGlow, b.lampGlow, s),
     headlightAlpha: lerp(a.headlightAlpha, b.headlightAlpha, s),
+    auroraAlpha: lerp(a.auroraAlpha, b.auroraAlpha, s),
   };
 }
 
-/**
- * Smoothly scaling speed curve over elapsed time + Rush Wave boost.
- */
-export function computeWorldSpeed(elapsed, modeId, isRush, isFever) {
+export function computeWorldSpeed(elapsed, modeId, stageIndex, isRush, isFever) {
   const mode = MODES[modeId] || MODES.normal;
-  // Asymptotic curve: ramps noticeably in the first 75 seconds, never unfair
-  const ramp = 1 - Math.exp(-elapsed / 68);
-  let speed = mode.startSpeed + (mode.maxSpeed - mode.startSpeed) * ramp;
-  if (isRush) speed *= 1.16;
-  if (isFever) speed *= 1.2;
+  const stageBonus = stageIndex * 28;
+  const ramp = 1 - Math.exp(-elapsed / 64);
+  let speed = Math.min(mode.maxSpeed, mode.startSpeed + stageBonus + (mode.maxSpeed - mode.startSpeed) * ramp);
+  if (isRush) speed *= 1.15;
+  if (isFever) speed *= 1.22;
   return speed;
 }
 
-/**
- * Combo multiplier: 1x up to 5x.
- */
 export function computeComboMultiplier(combo) {
   if (combo < 3) return 1;
   if (combo < 7) return 2;
@@ -74,9 +78,6 @@ export function computeComboMultiplier(combo) {
   return SCORING.maxComboMult;
 }
 
-/**
- * Evaluate player rank from final score.
- */
 export function evaluateRank(score) {
   for (const r of RANKS) {
     if (score >= r.minScore) return r;
@@ -84,10 +85,6 @@ export function evaluateRank(score) {
   return RANKS[RANKS.length - 1];
 }
 
-/**
- * Return player hitbox in world-relative ground coordinates:
- * y = altitude above ground (0 = standing on road, positive = upward).
- */
 export function getCrabHitbox(playerX, playerAltitude) {
   return {
     left: playerX - CRAB.hitW * 0.5,
@@ -97,9 +94,6 @@ export function getCrabHitbox(playerX, playerAltitude) {
   };
 }
 
-/**
- * Return obstacle hitbox in the same ground-altitude coordinate space.
- */
 export function getObstacleHitbox(ob) {
   const spec = OBSTACLE_SPECS[ob.kind];
   return {
@@ -114,9 +108,6 @@ export function rectsOverlap(a, b) {
   return a.left < b.right && a.right > b.left && a.bottom < b.top && a.top > b.bottom;
 }
 
-/**
- * Euclidean clearance distance between two non-overlapping AABBs (0 if overlapping).
- */
 export function rectDistance(a, b) {
   const dx = Math.max(0, b.left - a.right, a.left - b.right);
   const dy = Math.max(0, b.bottom - a.top, a.bottom - b.top);
@@ -124,8 +115,16 @@ export function rectDistance(a, b) {
 }
 
 /**
- * Pick a random element using provided rng function (for deterministic tests).
+ * Determine if an overlapping player is cleanly stomping the roof of an obstacle (or hitting a spring).
  */
+export function isStompBounce(prevAltitude, vy, obBox, ob) {
+  const spec = OBSTACLE_SPECS[ob.kind];
+  if (!spec || !spec.stompable) return false;
+  if (spec.isSpring) return true;
+  // Falling or diving onto the top 24px of the obstacle roof
+  return vy <= 60 && prevAltitude >= obBox.top - 24;
+}
+
 function pick(arr, rng) {
   return arr[Math.floor(rng() * arr.length)];
 }
@@ -146,10 +145,13 @@ function makeObstacle(kind, x, rng, airYOverride = null) {
     color,
     wheelPhase: rng() * Math.PI * 2,
     wingPhase: rng() * Math.PI * 2,
+    squash: 0, // roof bounce compression animation!
     cleared: false,
     jumpedOver: false,
+    bounced: false,
     minClearance: Infinity,
     smashed: false,
+    telegraphDone: false,
     vx: 0,
     vy: 0,
     rot: 0,
@@ -160,7 +162,7 @@ function makeObstacle(kind, x, rng, airYOverride = null) {
 function makeCollectible(type, x, airY, arcIndex = 0) {
   return {
     id: nextEntityId++,
-    type, // 'star' | 'shield' | 'heart'
+    type,
     x,
     airY,
     radius: type === 'star' ? 16 : 20,
@@ -171,164 +173,208 @@ function makeCollectible(type, x, airY, arcIndex = 0) {
 }
 
 /**
- * Generate a fair, engaging pattern of obstacles and collectibles starting at spawnX.
- * Returns { obstacles, collectibles, nextGap } where nextGap is horizontal spacing before next pattern.
+ * Curated, rhythm-tested commercial pattern generator with springboard sky routes & stomp chains.
  */
 export function generatePattern({
   spawnX,
   elapsed,
   speed,
-  isRush,
-  lives,
-  maxLives,
-  hasShield,
+  stageIndex = 0,
+  isRush = false,
+  lives = 3,
+  maxLives = 3,
+  hasShield = false,
+  shieldUpgradeLv = 0,
   rng = Math.random,
 }) {
   const obstacles = [];
   const collectibles = [];
 
-  // Difficulty tier 0..3
-  const tier = elapsed < 10 ? 0 : elapsed < 26 ? 1 : elapsed < 52 ? 2 : 3;
+  const tier = Math.min(3, stageIndex + (elapsed > 22 ? 1 : 0));
+  const speedRatio = clamp(speed / 340, 0.92, 2.05);
 
-  // Pool of curated, playtested patterns guaranteed to be jumpable
-  const patterns = ['singleCar', 'coneStar'];
-  if (tier >= 0) patterns.push('conePair', 'carWithArc');
-  if (tier >= 1) patterns.push('truckVault', 'seagullSwoop', 'sportZip');
-  if (tier >= 2) patterns.push('coneThenCar', 'carThenBird', 'truckHighStars');
-  if (tier >= 3 || isRush) patterns.push('rushStagger', 'sportThenTruck', 'birdPair');
+  const patterns = ['singleCar', 'taxiArc', 'conePair', 'springSkyRoute'];
+  if (tier >= 0) patterns.push('stompChain', 'seagullSwoop');
+  if (tier >= 1) patterns.push('truckVault', 'sportZip', 'coneThenCar', 'carThenBird');
+  if (tier >= 2) patterns.push('busVault', 'stompTriple', 'sportThenTruck', 'springOverBus');
+  if (tier >= 3 || isRush) patterns.push('rushStagger', 'birdPair', 'sportDouble');
 
   const chosen = pick(patterns, rng);
-
-  // Scale gap with speed so reaction & landing windows always remain fair
-  const speedRatio = clamp(speed / 340, 0.9, 2.0);
-  let patternWidth = 120;
+  let patternWidth = 130;
 
   switch (chosen) {
-    case 'coneStar': {
-      obstacles.push(makeObstacle('cone', spawnX, rng));
-      collectibles.push(makeCollectible('star', spawnX + 18, 92, 0));
-      collectibles.push(makeCollectible('star', spawnX + 58, 106, 1));
-      collectibles.push(makeCollectible('star', spawnX + 98, 86, 2));
-      patternWidth = 110;
+    case 'singleCar': {
+      obstacles.push(makeObstacle('car', spawnX, rng));
+      collectibles.push(makeCollectible('star', spawnX + 20, 102, 0));
+      collectibles.push(makeCollectible('star', spawnX + 56, 126, 1));
+      collectibles.push(makeCollectible('star', spawnX + 92, 102, 2));
+      patternWidth = 130;
+      break;
+    }
+    case 'taxiArc': {
+      obstacles.push(makeObstacle('taxi', spawnX, rng));
+      collectibles.push(makeCollectible('star', spawnX - 8, 96, 0));
+      collectibles.push(makeCollectible('star', spawnX + 56, 134, 1));
+      collectibles.push(makeCollectible('star', spawnX + 120, 96, 2));
+      patternWidth = 140;
       break;
     }
     case 'conePair': {
-      const gap = Math.round(170 * speedRatio);
+      const gap = Math.round(175 * speedRatio);
       obstacles.push(makeObstacle('cone', spawnX, rng));
       obstacles.push(makeObstacle('cone', spawnX + gap, rng));
       collectibles.push(makeCollectible('star', spawnX + 18, 92, 0));
       collectibles.push(makeCollectible('star', spawnX + gap + 18, 92, 1));
-      patternWidth = gap + 50;
+      patternWidth = gap + 54;
       break;
     }
-    case 'singleCar': {
+    case 'springSkyRoute': {
+      // Beach-ball trampoline launches crab into a golden star sky trail!
+      obstacles.push(makeObstacle('spring', spawnX, rng));
+      // Safe car underneath the high sky arc so bouncing feels thrilling!
+      obstacles.push(makeObstacle('car', spawnX + Math.round(180 * speedRatio), rng));
+      for (let i = 0; i < 6; i++) {
+        const t = i / 5;
+        const sx = spawnX + 60 + i * Math.round(52 * speedRatio);
+        const sy = 155 + Math.sin(t * Math.PI) * 105;
+        collectibles.push(makeCollectible('star', sx, sy, i));
+      }
+      patternWidth = Math.round(370 * speedRatio);
+      break;
+    }
+    case 'springOverBus': {
+      obstacles.push(makeObstacle('spring', spawnX, rng));
+      obstacles.push(makeObstacle('bus', spawnX + Math.round(145 * speedRatio), rng));
+      for (let i = 0; i < 5; i++) {
+        const t = i / 4;
+        const sx = spawnX + 65 + i * Math.round(62 * speedRatio);
+        const sy = 175 + Math.sin(t * Math.PI) * 95;
+        collectibles.push(makeCollectible('star', sx, sy, i));
+      }
+      patternWidth = Math.round(390 * speedRatio);
+      break;
+    }
+    case 'stompChain': {
+      // Two sedans spaced perfectly for roof-to-roof stomp bouncing!
+      const gap = Math.round(240 * speedRatio);
       obstacles.push(makeObstacle('car', spawnX, rng));
-      collectibles.push(makeCollectible('star', spawnX + 54, 108, 0));
-      patternWidth = 120;
+      obstacles.push(makeObstacle('taxi', spawnX + gap, rng));
+      collectibles.push(makeCollectible('star', spawnX + 56, 118, 0));
+      collectibles.push(makeCollectible('star', spawnX + Math.round(gap * 0.5) + 42, 152, 1));
+      collectibles.push(makeCollectible('star', spawnX + gap + 56, 118, 2));
+      patternWidth = gap + 135;
       break;
     }
-    case 'carWithArc': {
+    case 'stompTriple': {
+      const gap = Math.round(225 * speedRatio);
       obstacles.push(makeObstacle('car', spawnX, rng));
-      // 3-star rainbow arc over the sedan
-      collectibles.push(makeCollectible('star', spawnX - 10, 96, 0));
-      collectibles.push(makeCollectible('star', spawnX + 54, 128, 1));
-      collectibles.push(makeCollectible('star', spawnX + 118, 96, 2));
-      patternWidth = 135;
+      obstacles.push(makeObstacle('taxi', spawnX + gap, rng));
+      obstacles.push(makeObstacle('car', spawnX + gap * 2, rng));
+      collectibles.push(makeCollectible('star', spawnX + 56, 120, 0));
+      collectibles.push(makeCollectible('star', spawnX + gap + 56, 136, 1));
+      collectibles.push(makeCollectible('star', spawnX + gap * 2 + 56, 120, 2));
+      patternWidth = gap * 2 + 130;
       break;
     }
-    case 'sportZip': {
-      obstacles.push(makeObstacle('sport', spawnX, rng));
-      collectibles.push(makeCollectible('star', spawnX + 35, 114, 0));
-      collectibles.push(makeCollectible('star', spawnX + 85, 114, 1));
-      patternWidth = 140;
+    case 'seagullSwoop': {
+      obstacles.push(makeObstacle('bird', spawnX, rng, 70));
+      collectibles.push(makeCollectible('star', spawnX + 25, 154, 0));
+      collectibles.push(makeCollectible('star', spawnX + 68, 162, 1));
+      patternWidth = 115;
       break;
     }
     case 'truckVault': {
       obstacles.push(makeObstacle('truck', spawnX, rng));
-      // Guides player to double-jump nicely over the truck roof!
-      collectibles.push(makeCollectible('star', spawnX + 20, 146, 0));
-      collectibles.push(makeCollectible('star', spawnX + 84, 184, 1));
-      collectibles.push(makeCollectible('star', spawnX + 148, 152, 2));
-      patternWidth = 185;
-      break;
-    }
-    case 'truckHighStars': {
-      obstacles.push(makeObstacle('truck', spawnX, rng));
       for (let i = 0; i < 4; i++) {
         const t = i / 3;
-        const arcY = 145 + Math.sin(t * Math.PI) * 52;
-        collectibles.push(makeCollectible('star', spawnX + 10 + i * 50, arcY, i));
+        collectibles.push(makeCollectible('star', spawnX + 12 + i * 50, 150 + Math.sin(t * Math.PI) * 52, i));
       }
       patternWidth = 195;
       break;
     }
-    case 'seagullSwoop': {
-      // Low bird: player can stay grounded to duck under, OR double-jump for high stars!
-      obstacles.push(makeObstacle('bird', spawnX, rng, 70));
-      collectibles.push(makeCollectible('star', spawnX + 24, 150, 0));
-      collectibles.push(makeCollectible('star', spawnX + 64, 160, 1));
-      patternWidth = 110;
+    case 'busVault': {
+      obstacles.push(makeObstacle('bus', spawnX, rng));
+      for (let i = 0; i < 5; i++) {
+        const t = i / 4;
+        collectibles.push(makeCollectible('star', spawnX + 14 + i * 46, 156 + Math.sin(t * Math.PI) * 58, i));
+      }
+      patternWidth = 225;
+      break;
+    }
+    case 'sportZip': {
+      obstacles.push(makeObstacle('sport', spawnX, rng));
+      collectibles.push(makeCollectible('star', spawnX + 40, 118, 0));
+      collectibles.push(makeCollectible('star', spawnX + 92, 118, 1));
+      patternWidth = 145;
       break;
     }
     case 'coneThenCar': {
-      const gap = Math.round(230 * speedRatio);
+      const gap = Math.round(235 * speedRatio);
       obstacles.push(makeObstacle('cone', spawnX, rng));
       obstacles.push(makeObstacle('car', spawnX + gap, rng));
-      collectibles.push(makeCollectible('star', spawnX + 18, 94, 0));
-      collectibles.push(makeCollectible('star', spawnX + gap + 54, 122, 1));
-      patternWidth = gap + 125;
+      collectibles.push(makeCollectible('star', spawnX + 18, 96, 0));
+      collectibles.push(makeCollectible('star', spawnX + gap + 56, 124, 1));
+      patternWidth = gap + 130;
       break;
     }
     case 'carThenBird': {
-      const gap = Math.round(260 * speedRatio);
+      const gap = Math.round(265 * speedRatio);
       obstacles.push(makeObstacle('car', spawnX, rng));
-      obstacles.push(makeObstacle('bird', spawnX + gap, rng, 74));
-      collectibles.push(makeCollectible('star', spawnX + 54, 118, 0));
-      // Ground star encourages landing quickly (fast-fall!) to slip under the seagull
+      obstacles.push(makeObstacle('bird', spawnX + gap, rng, 72));
+      collectibles.push(makeCollectible('star', spawnX + 56, 120, 0));
       collectibles.push(makeCollectible('star', spawnX + gap + 22, 28, 1));
-      patternWidth = gap + 80;
+      patternWidth = gap + 85;
       break;
     }
     case 'rushStagger': {
-      const gap = Math.round(255 * speedRatio);
-      obstacles.push(makeObstacle('car', spawnX, rng));
+      const gap = Math.round(260 * speedRatio);
+      obstacles.push(makeObstacle('taxi', spawnX, rng));
       obstacles.push(makeObstacle('sport', spawnX + gap, rng));
-      collectibles.push(makeCollectible('star', spawnX + 54, 118, 0));
-      collectibles.push(makeCollectible('star', spawnX + gap + 58, 114, 1));
-      patternWidth = gap + 135;
+      collectibles.push(makeCollectible('star', spawnX + 56, 122, 0));
+      collectibles.push(makeCollectible('star', spawnX + gap + 60, 116, 1));
+      patternWidth = gap + 145;
       break;
     }
     case 'sportThenTruck': {
-      const gap = Math.round(295 * speedRatio);
+      const gap = Math.round(305 * speedRatio);
       obstacles.push(makeObstacle('sport', spawnX, rng));
       obstacles.push(makeObstacle('truck', spawnX + gap, rng));
-      collectibles.push(makeCollectible('star', spawnX + 58, 116, 0));
-      collectibles.push(makeCollectible('star', spawnX + gap + 84, 186, 1));
-      patternWidth = gap + 190;
+      collectibles.push(makeCollectible('star', spawnX + 60, 118, 0));
+      collectibles.push(makeCollectible('star', spawnX + gap + 86, 188, 1));
+      patternWidth = gap + 195;
       break;
     }
     case 'birdPair': {
-      const gap = Math.round(210 * speedRatio);
+      const gap = Math.round(215 * speedRatio);
       obstacles.push(makeObstacle('bird', spawnX, rng, 70));
-      obstacles.push(makeObstacle('bird', spawnX + gap, rng, 132));
-      collectibles.push(makeCollectible('star', spawnX + 22, 26, 0));
-      collectibles.push(makeCollectible('star', spawnX + gap + 22, 68, 1));
-      patternWidth = gap + 70;
+      obstacles.push(makeObstacle('bird', spawnX + gap, rng, 134));
+      collectibles.push(makeCollectible('star', spawnX + 24, 26, 0));
+      collectibles.push(makeCollectible('star', spawnX + gap + 24, 68, 1));
+      patternWidth = gap + 75;
+      break;
+    }
+    case 'sportDouble': {
+      const gap = Math.round(285 * speedRatio);
+      obstacles.push(makeObstacle('sport', spawnX, rng));
+      obstacles.push(makeObstacle('sport', spawnX + gap, rng));
+      collectibles.push(makeCollectible('star', spawnX + 60, 120, 0));
+      collectibles.push(makeCollectible('star', spawnX + gap + 60, 120, 1));
+      patternWidth = gap + 145;
       break;
     }
   }
 
-  // Occasional helpful power-ups placed in safe spots between patterns
+  // Power-ups in safe resting windows
   const powerupX = spawnX + patternWidth + Math.round(105 * speedRatio);
-  if (lives < maxLives && maxLives > 1 && elapsed > 18 && rng() < 0.085) {
-    collectibles.push(makeCollectible('heart', powerupX, 115, 0));
-  } else if (!hasShield && elapsed > 12 && rng() < 0.1) {
-    collectibles.push(makeCollectible('shield', powerupX, 128, 0));
+  const shieldChance = shieldUpgradeLv >= 2 ? 0.16 : 0.1;
+  if (lives < maxLives && maxLives > 1 && elapsed > 16 && rng() < 0.09) {
+    collectibles.push(makeCollectible('heart', powerupX, 118, 0));
+  } else if (!hasShield && elapsed > 10 && rng() < shieldChance) {
+    collectibles.push(makeCollectible('shield', powerupX, 130, 0));
   }
 
-  // Breathing room before the next pattern (tighter during Rush, still always fair)
-  const baseRest = isRush ? 235 : 295;
-  const jitter = rng() * (isRush ? 110 : 165);
+  const baseRest = isRush ? 230 : 290;
+  const jitter = rng() * (isRush ? 100 : 155);
   const nextGap = patternWidth + (baseRest + jitter) * speedRatio;
 
   return { obstacles, collectibles, nextGap };

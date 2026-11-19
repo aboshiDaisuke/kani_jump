@@ -4,17 +4,20 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, user-scalable=no" />
   <title>カニジャンプ DX</title>
-  <meta name="description" content="手芸ポンポンのカニ1号が横断歩道を駆け抜ける、爽快2Dジャンプアクションゲーム！" />
+  <meta name="description" content="手芸ポンポンのカニ1号が4つのステージを駆け抜ける！踏みつけバウンス・ジャンプ台・着せ替え＆強化つきの本格2Dアクションゲーム" />
   <meta name="theme-color" content="#38bdf8" />
   <link rel="icon" type="image/png" href="./images/favicon.png" />
   <link rel="apple-touch-icon" href="./images/icon-192.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Mochiy+Pop+One&family=Zen+Maru+Gothic:wght@500;700;900&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="./src/style.css" />
 </head>
 <body>
   <div id="app">
     <canvas id="game-canvas" aria-label="カニジャンプ DX ゲーム画面"></canvas>
 
-    <!-- HUD (常時またはプレイ中に表示) -->
+    <!-- HUD -->
     <header class="hud" id="hud" data-phase="title">
       <div class="hud-left">
         <div class="score-pill">
@@ -24,7 +27,11 @@
           </div>
           <div class="score-sub">
             <span class="best-badge" title="ベストスコア">👑 <b id="hud-best">0</b></span>
-            <span class="zone-badge" id="hud-zone">昼の横断歩道</span>
+            <span class="star-hud" title="獲得スター">★ <b id="hud-stars">0</b></span>
+          </div>
+          <div class="stage-bar-row">
+            <span class="stage-tag" id="hud-stage">STAGE 1 ひだまりの港町</span>
+            <div class="stage-track"><div class="stage-fill" id="hud-stage-fill"></div></div>
           </div>
         </div>
 
@@ -46,23 +53,33 @@
       </div>
 
       <div class="hud-right">
+        <div class="bank-pill" id="hud-bank-pill" title="所持スター">
+          <span class="bank-star">★</span><b id="hud-bank-stars">0</b>
+        </div>
         <button class="icon-btn" id="btn-bgm" type="button" title="BGM オン/オフ" aria-label="BGM オン/オフ">🎵</button>
         <button class="icon-btn" id="btn-sfx" type="button" title="効果音 オン/オフ" aria-label="効果音 オン/オフ">🔊</button>
         <button class="icon-btn" id="btn-pause" type="button" title="一時停止 (P)" aria-label="一時停止" hidden>⏸</button>
       </div>
     </header>
 
-    <!-- ラッシュ／フィーバー演出バナー -->
+    <!-- 演出バナー & ミッション達成トースト -->
     <div class="banner" id="banner" hidden>
-      <span class="banner-text" id="banner-text">信号点滅！ラッシュタイム！</span>
+      <span class="banner-text" id="banner-text">STAGE CLEAR!!</span>
+    </div>
+    <div class="toast" id="mission-toast" hidden>
+      <span class="toast-icon">🏆</span>
+      <div class="toast-body">
+        <strong id="toast-title">ミッション達成！</strong>
+        <small id="toast-sub">+60★ 獲得！</small>
+      </div>
     </div>
 
     <!-- カウントダウン -->
     <div class="countdown" id="countdown" hidden>3</div>
 
-    <!-- モバイル＆タッチ用アクションボタン -->
+    <!-- タッチ用アクションボタン -->
     <div class="touch-controls" id="touch-controls" hidden>
-      <button class="ctl-btn ctl-dive" id="ctl-dive" type="button" tabindex="-1" aria-label="急降下">
+      <button class="ctl-btn ctl-dive" id="ctl-dive" type="button" tabindex="-1" aria-label="急降下＆踏みつけ">
         <span class="ctl-icon">⬇</span>
         <span class="ctl-label">きゅうこうか</span>
       </button>
@@ -77,19 +94,19 @@
       <div class="card title-card">
         <div class="mascot-wrap">
           <img class="mascot bounce" src="./images/kani.png" alt="カニ1号" />
-          <span class="dx-tag">2D ACTION DX</span>
+          <span class="dx-tag">DX EDITION</span>
         </div>
 
         <h1 class="logo" aria-label="カニジャンプ DX">
           <span class="c1">カ</span><span class="c2">ニ</span><span class="c3">ジ</span><span class="c4">ャ</span><span class="c5">ン</span><span class="c6">プ</span>
           <span class="dx">DX</span>
         </h1>
-        <p class="subtitle">横断歩道をかけぬけろ！<br />2段ジャンプ＆カニ無双でハイスコアを目指そう</p>
+        <p class="subtitle">踏みつけバウンス＆ジャンプ台で空をかけろ！<br />全4ステージ制覇を目指す爽快2Dアクション</p>
 
         <div class="mode-switch" role="radiogroup" aria-label="ゲームモード">
           <button class="mode-btn active" id="mode-normal" type="button" data-mode="normal">
             <strong>ノーマル</strong>
-            <small>❤️×3 じっくり挑戦</small>
+            <small>❤️×3 じっくり冒険</small>
           </button>
           <button class="mode-btn" id="mode-challenge" type="button" data-mode="challenge">
             <strong>チャレンジ</strong>
@@ -97,16 +114,74 @@
           </button>
         </div>
 
+        <div class="quick-nav">
+          <button class="nav-pill" id="btn-open-shop" type="button">
+            <span>🛍️</span><b>着せ替え＆強化</b>
+          </button>
+          <button class="nav-pill" id="btn-open-missions" type="button">
+            <span>🏆</span><b>ミッション</b>
+          </button>
+          <button class="nav-pill" id="btn-open-stages" type="button">
+            <span>🗺️</span><b id="btn-stage-label">STAGE 1</b>
+          </button>
+        </div>
+
         <ul class="howto-grid">
-          <li><span class="chip chip-jump">タップ / Space</span><span>長押しで大ジャンプ＆2段ジャンプ</span></li>
-          <li><span class="chip chip-dive">下スワイプ / ↓</span><span>空中から急降下ですばやく着地</span></li>
-          <li><span class="chip chip-truck">トラック / 鳥</span><span>高い車は2段ジャンプ！鳥はくぐれる</span></li>
-          <li><span class="chip chip-fever">FEVER!</span><span>ゲージ満タンで無敵＆車を吹き飛ばす</span></li>
+          <li><span class="chip chip-jump">タップ / Space</span><span>長押し大ジャンプ＆2段ジャンプ</span></li>
+          <li><span class="chip chip-bounce">踏みつけ / ↓</span><span>車の屋根に急降下でハイバウンス！</span></li>
+          <li><span class="chip chip-spring">ジャンプ台</span><span>空の★ボーナスルートへ大ジャンプ</span></li>
+          <li><span class="chip chip-fever">FEVER!</span><span>ゲージ満タンで無敵＆車をふきとばす</span></li>
         </ul>
 
         <button class="btn-primary pulse" id="btn-start" type="button">ゲームスタート！</button>
-        <p class="best-line">👑 ベストスコア：<b id="title-best">0</b></p>
+        <p class="best-line">👑 ベスト：<b id="title-best">0</b> ／ ★ 所持スター：<b id="title-stars">0</b></p>
         <a class="portal-back" id="portal-back" href="../" hidden>🏠 2D / 3D 選択にもどる</a>
+      </div>
+    </section>
+
+    <!-- ショップ＆着せ替えモーダル -->
+    <section class="overlay dim" id="screen-shop" hidden>
+      <div class="card modal-card">
+        <div class="modal-head">
+          <h2>🛍️ ショップ＆着せ替え</h2>
+          <div class="modal-bank">★ <b id="shop-bank">0</b></div>
+        </div>
+
+        <div class="tab-bar">
+          <button class="tab-btn active" id="tab-cosmetics" type="button">🎀 着せ替え</button>
+          <button class="tab-btn" id="tab-upgrades" type="button">⚡ パワーアップ</button>
+        </div>
+
+        <div class="shop-list" id="shop-cosmetics-list"></div>
+        <div class="shop-list" id="shop-upgrades-list" hidden></div>
+
+        <button class="btn-secondary modal-close" id="btn-close-shop" type="button">とじる</button>
+      </div>
+    </section>
+
+    <!-- ミッションモーダル -->
+    <section class="overlay dim" id="screen-missions" hidden>
+      <div class="card modal-card">
+        <div class="modal-head">
+          <h2>🏆 ミッション</h2>
+          <div class="modal-badge" id="missions-progress">達成 0 / 12</div>
+        </div>
+        <p class="modal-sub">クリアすると ★スター がもらえるよ！ショップで着せ替えや強化に使おう</p>
+        <div class="mission-list" id="missions-list"></div>
+        <button class="btn-secondary modal-close" id="btn-close-missions" type="button">とじる</button>
+      </div>
+    </section>
+
+    <!-- ステージ選択モーダル -->
+    <section class="overlay dim" id="screen-stages" hidden>
+      <div class="card modal-card">
+        <div class="modal-head">
+          <h2>🗺️ ステージ選択</h2>
+          <div class="modal-badge" id="stages-unlocked-badge">開放 1 / 4</div>
+        </div>
+        <p class="modal-sub">プレイを進めて次のステージへ到達すると解放されます</p>
+        <div class="stage-list" id="stages-list"></div>
+        <button class="btn-secondary modal-close" id="btn-close-stages" type="button">とじる</button>
       </div>
     </section>
 
@@ -131,26 +206,32 @@
           <div class="rank-badge" id="over-rank">A</div>
         </div>
         <h2 id="over-heading">おつかれさま！</h2>
-        <p class="rank-title" id="over-rank-title">ハサミさばき達人</p>
+        <p class="rank-title" id="over-rank-title">アクロバットハサミ達人</p>
 
         <div class="final-score-box">
           <span class="final-score" id="over-score">0</span>
           <small>てん</small>
         </div>
-        <p class="new-record" id="over-new-record" hidden>🎉 NEW RECORD! ベスト更新！</p>
+        <div class="reward-row">
+          <span class="new-record" id="over-new-record" hidden>🎉 NEW RECORD!</span>
+          <span class="earned-stars" id="over-earned-stars">★ +0 獲得！</span>
+        </div>
 
         <dl class="stats-grid">
-          <div><dt>飛び越え</dt><dd id="stat-jumps">0</dd></div>
+          <div><dt>到達</dt><dd id="stat-stage">STAGE 1</dd></div>
+          <div><dt>踏みつけ</dt><dd id="stat-bounces">0</dd></div>
           <div><dt>ニアミス</dt><dd id="stat-nearmiss">0</dd></div>
           <div><dt>★スター</dt><dd id="stat-stars">0</dd></div>
           <div><dt>最大コンボ</dt><dd id="stat-combo">0</dd></div>
           <div><dt>スマッシュ</dt><dd id="stat-smash">0</dd></div>
-          <div><dt>ベスト</dt><dd id="stat-best">0</dd></div>
         </dl>
 
         <div class="btn-stack">
           <button class="btn-primary" id="btn-retry" type="button">もう一回あそぶ！</button>
-          <button class="btn-ghost" id="btn-title" type="button">タイトルへもどる</button>
+          <div class="btn-row-2">
+            <button class="btn-secondary" id="btn-over-shop" type="button">🛍️ ショップ</button>
+            <button class="btn-secondary" id="btn-title" type="button">🏠 タイトル</button>
+          </div>
         </div>
       </div>
     </section>

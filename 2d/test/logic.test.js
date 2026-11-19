@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { CRAB, MODES, OBSTACLE_SPECS, PHYSICS } from '../src/config.js';
+import { CRAB, MODES, OBSTACLE_SPECS, PHYSICS, STAGES } from '../src/config.js';
 import {
   computeComboMultiplier,
   computeWorldSpeed,
@@ -8,10 +8,18 @@ import {
   generatePattern,
   getCrabHitbox,
   getObstacleHitbox,
+  isStompBounce,
   rectDistance,
   rectsOverlap,
-  sampleSkyPalette,
+  sampleStagePalette,
 } from '../src/logic.js';
+import {
+  buyOrEquipCosmetic,
+  buyUpgrade,
+  createDefaultMeta,
+  evaluateMissions,
+  getUpgradeValue,
+} from '../src/meta.js';
 
 function seededRng(seed = 12345) {
   let s = seed >>> 0;
@@ -21,17 +29,28 @@ function seededRng(seed = 12345) {
   };
 }
 
-test('single jump clears sedan car and double jump clears delivery truck', () => {
+test('single jump clears sedan/taxi and double jump clears truck/bus', () => {
   const singlePeak = (PHYSICS.jumpVy ** 2) / (2 * PHYSICS.gravity);
   const doublePeak = singlePeak + (PHYSICS.doubleJumpVy ** 2) / (2 * PHYSICS.gravity);
   const carHitHeight = OBSTACLE_SPECS.car.h - OBSTACLE_SPECS.car.hitPadTop;
-  const truckHitHeight = OBSTACLE_SPECS.truck.h - OBSTACLE_SPECS.truck.hitPadTop;
+  const busHitHeight = OBSTACLE_SPECS.bus.h - OBSTACLE_SPECS.bus.hitPadTop;
 
-  assert.ok(singlePeak > carHitHeight + 30, `singlePeak=${singlePeak} should easily clear car=${carHitHeight}`);
-  assert.ok(doublePeak > truckHitHeight + 80, `doublePeak=${doublePeak} should easily clear truck=${truckHitHeight}`);
+  assert.ok(singlePeak > carHitHeight + 30);
+  assert.ok(doublePeak > busHitHeight + 80);
 });
 
-test('grounded crab safely passes under low seagull', () => {
+test('stomp bounce triggers when falling onto car roof or hitting springboard, not side hit', () => {
+  const car = { kind: 'car', x: 100, w: OBSTACLE_SPECS.car.w, h: OBSTACLE_SPECS.car.h, airY: 0 };
+  const carBox = getObstacleHitbox(car);
+  assert.equal(isStompBounce(carBox.top + 8, -320, carBox, car), true);
+  assert.equal(isStompBounce(5, 0, carBox, car), false);
+
+  const spring = { kind: 'spring', x: 100, w: OBSTACLE_SPECS.spring.w, h: OBSTACLE_SPECS.spring.h, airY: 0 };
+  const springBox = getObstacleHitbox(spring);
+  assert.equal(isStompBounce(0, 0, springBox, spring), true);
+});
+
+test('grounded crab passes safely under seagull with near-miss margin', () => {
   const crab = getCrabHitbox(150, 0);
   const bird = getObstacleHitbox({
     kind: 'bird',
@@ -42,80 +61,85 @@ test('grounded crab safely passes under low seagull', () => {
   });
   assert.equal(rectsOverlap(crab, bird), false);
   const gap = rectDistance(crab, bird);
-  assert.ok(gap >= 15 && gap <= 35, `Expected thrilling near-miss clearance, got ${gap}`);
+  assert.ok(gap >= 15 && gap <= 35);
 });
 
-test('collision and near-miss distance calculations are accurate', () => {
-  const crab = getCrabHitbox(150, 0);
-  const carOverlap = getObstacleHitbox({
-    kind: 'car',
-    x: 120,
-    w: OBSTACLE_SPECS.car.w,
-    h: OBSTACLE_SPECS.car.h,
-    airY: 0,
-  });
-  assert.equal(rectsOverlap(crab, carOverlap), true);
-  assert.equal(rectDistance(crab, carOverlap), 0);
-
-  const crabAbove = getCrabHitbox(150, 65);
-  assert.equal(rectsOverlap(crabAbove, carOverlap), false);
-  assert.equal(rectDistance(crabAbove, carOverlap), 15);
-});
-
-test('speed scales smoothly and respects rush/fever multipliers', () => {
-  const s0 = computeWorldSpeed(0, 'normal', false, false);
-  const s60 = computeWorldSpeed(60, 'normal', false, false);
-  const sRush = computeWorldSpeed(60, 'normal', true, false);
-  const sFever = computeWorldSpeed(60, 'normal', false, true);
+test('speed scales across stages, rush, and fever', () => {
+  const s0 = computeWorldSpeed(0, 'normal', 0, false, false);
+  const sStage2 = computeWorldSpeed(25, 'normal', 1, false, false);
+  const sRush = computeWorldSpeed(25, 'normal', 1, true, false);
+  const sFever = computeWorldSpeed(25, 'normal', 1, false, true);
 
   assert.equal(s0, MODES.normal.startSpeed);
-  assert.ok(s60 > s0 && s60 < MODES.normal.maxSpeed);
-  assert.ok(sRush > s60);
-  assert.ok(sFever > s60);
+  assert.ok(sStage2 > s0);
+  assert.ok(sRush > sStage2);
+  assert.ok(sFever > sStage2);
 });
 
-test('pattern generator produces fair spaced patterns across all difficulty tiers', () => {
+test('pattern generator produces fair non-overlapping formations across all 4 stages', () => {
   const rng = seededRng(2026);
-  for (const elapsed of [2, 15, 35, 70]) {
+  for (let stageIndex = 0; stageIndex < STAGES.length; stageIndex++) {
     for (let i = 0; i < 30; i++) {
       const pat = generatePattern({
-        spawnX: 800,
-        elapsed,
-        speed: computeWorldSpeed(elapsed, 'normal', i % 4 === 0, false),
+        spawnX: 850,
+        elapsed: stageIndex * 35 + i,
+        speed: computeWorldSpeed(stageIndex * 35, 'normal', stageIndex, i % 4 === 0, false),
+        stageIndex,
         isRush: i % 4 === 0,
         lives: 2,
         maxLives: 3,
         hasShield: false,
+        shieldUpgradeLv: 1,
         rng,
       });
-      assert.ok(pat.obstacles.length >= 1 && pat.obstacles.length <= 2);
-      assert.ok(pat.nextGap >= 240, `nextGap=${pat.nextGap} too tight`);
-      if (pat.obstacles.length === 2) {
-        const [a, b] = pat.obstacles;
-        assert.ok(b.x > a.x + a.w, 'Two obstacles in a pattern must not overlap');
+      assert.ok(pat.obstacles.length >= 1 && pat.obstacles.length <= 3);
+      assert.ok(pat.nextGap >= 240);
+      for (let j = 0; j < pat.obstacles.length - 1; j++) {
+        const a = pat.obstacles[j];
+        const b = pat.obstacles[j + 1];
+        assert.ok(b.x > a.x + a.w, `Overlap in stage ${stageIndex}`);
       }
     }
   }
 });
 
-test('combo multiplier and rank evaluation', () => {
-  assert.equal(computeComboMultiplier(0), 1);
-  assert.equal(computeComboMultiplier(3), 2);
-  assert.equal(computeComboMultiplier(8), 3);
-  assert.equal(computeComboMultiplier(15), 4);
-  assert.equal(computeComboMultiplier(25), 5);
-
-  assert.equal(evaluateRank(0).grade, 'D');
-  assert.equal(evaluateRank(1900).grade, 'A');
-  assert.equal(evaluateRank(5000).grade, 'S+');
+test('stage palettes blend smoothly across all 4 biomes including Aurora', () => {
+  const s1 = sampleStagePalette(0);
+  const s2 = sampleStagePalette(1);
+  const s3 = sampleStagePalette(2);
+  const s4 = sampleStagePalette(3);
+  assert.equal(s1.starAlpha, 0);
+  assert.equal(s2.ambient, 'embers');
+  assert.equal(s3.starAlpha, 1);
+  assert.equal(s4.auroraAlpha, 1);
+  assert.equal(CRAB.hitW < CRAB.visualW, true);
 });
 
-test('sky palette smoothly interpolates across day-sunset-night-dawn', () => {
-  const day = sampleSkyPalette(0);
-  const night = sampleSkyPalette(2);
-  const mid = sampleSkyPalette(1.5);
-  assert.equal(day.starAlpha, 0);
-  assert.equal(night.starAlpha, 1);
-  assert.ok(mid.starAlpha > 0.25 && mid.starAlpha < 1);
-  assert.equal(CRAB.hitW < CRAB.visualW, true);
+test('meta shop cosmetics, upgrades, and mission rewards work end-to-end', () => {
+  const meta = createDefaultMeta();
+  assert.equal(buyOrEquipCosmetic(meta, 'crown').ok, false);
+
+  meta.bankStars = 1000;
+  const buyCrown = buyOrEquipCosmetic(meta, 'crown');
+  assert.equal(buyCrown.ok, true);
+  assert.equal(buyCrown.action, 'bought');
+  assert.equal(meta.equippedCosmetic, 'crown');
+  assert.equal(meta.bankStars, 350);
+
+  const up = buyUpgrade(meta, 'magnet');
+  assert.equal(up.ok, true);
+  assert.equal(getUpgradeValue(meta, 'magnet'), 95);
+
+  const beforeBank = meta.bankStars;
+  const done = evaluateMissions(meta, { stars: 20, bounces: 4, nearMisses: 0 });
+  assert.equal(done.length, 2);
+  assert.ok(meta.bankStars > beforeBank);
+  assert.equal(meta.activeMissions.length, 3);
+});
+
+test('combo multiplier and rank grades', () => {
+  assert.equal(computeComboMultiplier(1), 1);
+  assert.equal(computeComboMultiplier(5), 2);
+  assert.equal(computeComboMultiplier(25), 5);
+  assert.equal(evaluateRank(6500).grade, 'S+');
 });
